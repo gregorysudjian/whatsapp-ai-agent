@@ -12,6 +12,7 @@
     "start": "node --env-file=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "pretest": "node -e \"for (const f of ['data/test.db','data/test.db-wal','data/test.db-shm']) require('fs').rmSync(f,{force:true})\"",
+    "fake-webhook": "tsx --env-file=.env src/testing/cli-webhook.ts",
     "test": "node --env-file=.env.test --test --test-concurrency=1 --test-reporter=spec \"src/**/*.test.ts\""
   },
   "dependencies": {
