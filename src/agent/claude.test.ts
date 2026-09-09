@@ -100,7 +100,9 @@ test("request shape matches what Opus 5 accepts", async () => {
   assert.equal(p.model, "claude-opus-5");
   assert.equal(p.max_tokens, 8192);
   assert.deepEqual(p.thinking, { type: "adaptive" });
-  assert.equal((p as { output_config?: { effort?: string } }).output_config?.effort, "low");
+  // medium rather than low: tool selection benefits from a step up.
+  assert.equal((p as { output_config?: { effort?: string } }).output_config?.effort, "medium");
+  assert.ok(Array.isArray(p.tools) && p.tools.length > 0, "tools must be offered");
   assert.equal(
     (p.thinking as { budget_tokens?: number }).budget_tokens, undefined,
     "budget_tokens is rejected with a 400 on Opus 5",

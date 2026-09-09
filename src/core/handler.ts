@@ -46,7 +46,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     return;
   }
 
-  const reply = await generateReply(msg.from);
+  const reply = await generateReply(msg.from, msg.senderName);
 
   if (!reply.ok) {
     recordEvent("warn", "fallback_reply_sent", { to: msg.from, id: msg.id });

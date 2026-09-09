@@ -1,5 +1,5 @@
 /**
- * Phase 3: Claude generates the reply.
+ * Phase 3/4: Claude generates the reply, calling business tools as needed.
  *
  * The channel layer never reaches in here - this takes a conversation id and
  * returns text, so the same agent can sit behind SMS or web chat later.
@@ -11,6 +11,7 @@ import { log } from "../logger.ts";
 import { recordEvent } from "../store/db.ts";
 import { buildHistory } from "./memory.ts";
 import { buildSystemPrompt } from "./persona.ts";
+import { TOOLS, executeTool, type ToolContext } from "./tools.ts";
 
 /**
  * Constructed lazily and replaceable, which is what makes this testable with
@@ -50,79 +51,135 @@ export interface ReplyResult {
   /** False when the fallback was used - the caller decides how to record it. */
   ok: boolean;
   usage: Usage | undefined;
+  /** True when a tool handed the conversation to a person. */
+  handoff: boolean;
 }
 
 const RETRYABLE = new Set(["rate_limit", "connection", "server"]);
 const MAX_ATTEMPTS = 2;
 
-export async function generateReply(waId: string): Promise<ReplyResult> {
+/**
+ * A runaway tool loop is real money, so it is capped rather than trusted to
+ * terminate. Five is comfortably more than any flow here needs: check
+ * availability, book, confirm.
+ */
+const MAX_TOOL_ITERATIONS = 5;
+
+export async function generateReply(
+  waId: string,
+  senderName?: string,
+): Promise<ReplyResult> {
   const messages = buildHistory(waId);
+  const ctx: ToolContext = { waId, senderName };
 
   if (messages.length === 0) {
     // Nothing replayable (e.g. the only message was media with no caption).
-    return { text: FALLBACK_REPLY, ok: false, usage: undefined };
+    return { text: FALLBACK_REPLY, ok: false, usage: undefined, handoff: false };
   }
 
   let lastKind = "unknown";
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const started = Date.now();
+
+    // Accumulated across the turn: a tool round trip is several calls, and
+    // the conversation paid for all of them.
+    const total: Usage = {
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, latencyMs: 0,
+    };
+    let handoff = false;
+
     try {
-      // Streamed even though WhatsApp cannot render tokens progressively: a
-      // large max_tokens on a non-streaming request risks an HTTP timeout.
-      const response = await getClient()
-        .messages.stream({
-          model: config.anthropic.model,
-          max_tokens: config.anthropic.maxTokens,
-          system: [{
-            type: "text",
-            text: buildSystemPrompt(),
-            // Resent on every inbound message, so it is the cheapest win
-            // available. Requires the prompt to stay byte-stable.
-            cache_control: { type: "ephemeral" },
-          }],
-          messages,
-          // Thinking is on by default on Opus 5 and disabling it has known
-          // failure modes; `low` effort is the cheap setting for short chat.
-          thinking: { type: "adaptive" },
-          output_config: { effort: "low" },
-        })
-        .finalMessage();
+      for (let iteration = 1; iteration <= MAX_TOOL_ITERATIONS; iteration++) {
+        // Streamed even though WhatsApp cannot render tokens progressively: a
+        // large max_tokens on a non-streaming request risks an HTTP timeout.
+        const response = await getClient()
+          .messages.stream({
+            model: config.anthropic.model,
+            max_tokens: config.anthropic.maxTokens,
+            system: [{
+              type: "text",
+              text: buildSystemPrompt(),
+              // Resent on every inbound message, so it is the cheapest win
+              // available. Requires the prompt to stay byte-stable.
+              cache_control: { type: "ephemeral" },
+            }],
+            messages,
+            tools: TOOLS,
+            // Thinking is on by default on Opus 5 and disabling it has known
+            // failure modes. `medium` rather than `low` because tool choice
+            // benefits from a step up; plain chat would not.
+            thinking: { type: "adaptive" },
+            output_config: { effort: "medium" },
+          })
+          .finalMessage();
 
-      const usage: Usage = {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
-        latencyMs: Date.now() - started,
-      };
+        total.inputTokens += response.usage.input_tokens;
+        total.outputTokens += response.usage.output_tokens;
+        total.cacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
+        total.latencyMs = Date.now() - started;
 
-      // Guard the stop reason before reading content: on a refusal there may
-      // be no content at all, and stop_details is null for every other reason.
-      if (response.stop_reason === "refusal") {
-        log.warn("claude_refused", { waId, category: response.stop_details?.category });
-        recordEvent("warn", "claude_refused", {
-          waId, category: response.stop_details?.category ?? null,
+        // Guard the stop reason before reading content: on a refusal there
+        // may be no content at all, and stop_details is null otherwise.
+        if (response.stop_reason === "refusal") {
+          log.warn("claude_refused", { waId, category: response.stop_details?.category });
+          recordEvent("warn", "claude_refused", {
+            waId, category: response.stop_details?.category ?? null,
+          });
+          return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
+        }
+
+        if (response.stop_reason === "tool_use") {
+          const calls = response.content.filter(
+            (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+          );
+
+          // Echo the assistant turn back verbatim, thinking blocks included -
+          // stripping them breaks the next request on a thinking model.
+          messages.push({ role: "assistant", content: response.content });
+
+          // All results go back in ONE user message. Splitting them across
+          // several teaches the model to stop making parallel calls.
+          const results: Anthropic.ToolResultBlockParam[] = [];
+          for (const call of calls) {
+            const outcome = executeTool(call.name, call.input, ctx);
+            if (outcome.handoff) handoff = true;
+            results.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: outcome.content,
+            });
+          }
+          messages.push({ role: "user", content: results });
+
+          log.info("tool_iteration", { waId, iteration, tools: calls.map((c) => c.name) });
+          continue;
+        }
+
+        const text = response.content
+          .filter((b): b is Anthropic.TextBlock => b.type === "text")
+          .map((b) => b.text)
+          .join("\n")
+          .trim();
+
+        log.info("claude_replied", {
+          waId, attempt, iterations: iteration, turns: messages.length,
+          stop: response.stop_reason, ...total,
         });
-        return { text: FALLBACK_REPLY, ok: false, usage };
+
+        if (text === "") {
+          log.warn("claude_empty_text", { waId, stop: response.stop_reason });
+          recordEvent("warn", "claude_empty_text", { waId, stop: response.stop_reason });
+          return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
+        }
+
+        return { text, ok: true, usage: total, handoff };
       }
 
-      const text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim();
-
-      log.info("claude_replied", {
-        waId, attempt, turns: messages.length, stop: response.stop_reason, ...usage,
-      });
-
-      if (text === "") {
-        log.warn("claude_empty_text", { waId, stop: response.stop_reason });
-        recordEvent("warn", "claude_empty_text", { waId, stop: response.stop_reason });
-        return { text: FALLBACK_REPLY, ok: false, usage };
-      }
-
-      return { text, ok: true, usage };
+      // Fell out of the loop still asking for tools.
+      log.warn("tool_loop_exhausted", { waId, cap: MAX_TOOL_ITERATIONS });
+      recordEvent("warn", "tool_loop_exhausted", { waId, cap: MAX_TOOL_ITERATIONS });
+      return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
     } catch (err) {
       const detail = classifyError(err);
       lastKind = String(detail["kind"]);
@@ -131,14 +188,14 @@ export async function generateReply(waId: string): Promise<ReplyResult> {
       log.error("claude_failed", { waId, attempt, willRetry, ...detail });
       if (!willRetry) {
         recordEvent("error", "claude_failed", { waId, ...detail });
-        return { text: FALLBACK_REPLY, ok: false, usage: undefined };
+        return { text: FALLBACK_REPLY, ok: false, usage: undefined, handoff };
       }
       await delay(attempt * 500);
     }
   }
 
   recordEvent("error", "claude_failed", { waId, kind: lastKind, exhausted: true });
-  return { text: FALLBACK_REPLY, ok: false, usage: undefined };
+  return { text: FALLBACK_REPLY, ok: false, usage: undefined, handoff: false };
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
