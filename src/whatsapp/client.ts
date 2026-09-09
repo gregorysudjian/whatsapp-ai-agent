@@ -1,6 +1,6 @@
 import { config, graphBaseUrl } from "../config.ts";
 import { log } from "../logger.ts";
-import { recordEvent, recordOutbound } from "../store/db.ts";
+import { recordEvent, recordOutbound, windowState } from "../store/db.ts";
 
 const MESSAGES_URL = `${graphBaseUrl}/${config.whatsapp.phoneNumberId}/messages`;
 
@@ -48,6 +48,20 @@ async function graphPost(url: string, body: unknown): Promise<unknown> {
  */
 export async function sendText(to: string, body: string): Promise<string[]> {
   const wamids: string[] = [];
+
+  // Checked here rather than in the handler so every send path is covered.
+  // Outside the window Graph rejects free-form text outright, and the reply
+  // disappears with only a generic API error to show for it.
+  const window = windowState(to);
+  if (!window.open) {
+    log.warn("window_closed", { to, lastInboundTs: window.lastInboundTs });
+    recordEvent("warn", "window_closed", {
+      to,
+      lastInboundTs: window.lastInboundTs,
+      hint: "Outside Meta's 24h window only approved template messages deliver.",
+    });
+    return wamids;
+  }
 
   for (const chunk of splitMessage(body)) {
     const result = (await graphPost(MESSAGES_URL, {

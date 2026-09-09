@@ -131,6 +131,32 @@ export function recordOutbound(id: string, waId: string, text: string): void {
   publish({ kind: "message", direction: "out", waId, id });
 }
 
+const windowStmt = db.prepare(
+  `SELECT last_inbound_ts FROM contacts WHERE wa_id = ?`,
+);
+
+export interface WindowState {
+  open: boolean;
+  remainingMs: number;
+  lastInboundTs: number | null;
+}
+
+/**
+ * Meta only allows free-form messages within 24h of the contact's last
+ * inbound message. Outside it, only pre-approved templates deliver - the API
+ * rejects everything else, so an unguarded send just vanishes.
+ */
+export function windowState(waId: string): WindowState {
+  const row = windowStmt.get(waId) as Record<string, unknown> | undefined;
+  const raw = row?.["last_inbound_ts"];
+  const last = typeof raw === "number" ? raw : typeof raw === "bigint" ? Number(raw) : null;
+
+  if (last === null) return { open: false, remainingMs: 0, lastInboundTs: null };
+
+  const remainingMs = Math.max(0, last + WINDOW_MS - Date.now());
+  return { open: remainingMs > 0, remainingMs, lastInboundTs: last };
+}
+
 const seenStmt = db.prepare(`SELECT 1 AS hit FROM messages WHERE id = ?`);
 
 /** Has this message id already been stored? Survives restarts, unlike a Map. */

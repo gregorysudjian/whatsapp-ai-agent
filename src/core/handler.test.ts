@@ -130,7 +130,7 @@ test("Meta's retry of the same message is ignored, not answered twice", async ()
   assert.equal(listMessages(wa).length, 2, "one inbound, one outbound");
 });
 
-test("two messages from one contact are answered in order", async () => {
+test("concurrent messages from one contact do not interleave", async () => {
   setClientForTesting(claudeSaying("ok"));
   const wa = "14000000005";
 
@@ -140,9 +140,19 @@ test("two messages from one contact are answered in order", async () => {
   ]);
   await waitForSends(2);
 
-  const texts = listMessages(wa).map((m) => m.text);
-  assert.deepEqual(texts, ["first", "ok", "second", "ok"],
-    "serialisation must keep question/answer pairs adjacent");
+  const messages = listMessages(wa);
+
+  // Arrival order between two concurrent requests is not deterministic, and
+  // Meta does not guarantee it either. The invariant that matters is that the
+  // pairs do not interleave: each question is followed by its own answer.
+  assert.deepEqual(
+    messages.map((m) => m.direction), ["in", "out", "in", "out"],
+    "without serialisation both questions land before either answer",
+  );
+  assert.deepEqual(
+    messages.filter((m) => m.direction === "in").map((m) => m.text).sort(),
+    ["first", "second"],
+  );
 });
 
 test("a model failure still sends the customer a sentence", async () => {
