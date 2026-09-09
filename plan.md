@@ -229,8 +229,30 @@ A `MORNING.md` will list this concretely, but in short:
 
 ## 9. Decision log
 
-Appended as I go — every non-obvious choice, and anything I decided that you might reverse.
-Reversal instructions included for each.
+Every non-obvious choice, and how to reverse it.
+
+| # | Decision | Why | To reverse |
+|---|---|---|---|
+| 1 | `git init` in the project | The nearest repo root was the home directory; a stray `git add .` would stage `~/.ssh` | `rm -rf .git` |
+| 2 | Test env in `.env.test`, committed | Importing any module pulls in `config.ts`, which validates env and opens SQLite; without it the suite would run against real credentials and the live database | Delete it and pass env another way |
+| 3 | `--test-concurrency=1` | Test files share one SQLite file; parallel writers flake rather than fail honestly | Drop the flag once each file gets its own DB |
+| 4 | Empty credential vars deleted at boot, scoped to the Anthropic chain | An empty string claims its slot and authenticates as empty. Scoped rather than global because empty is legitimate elsewhere | Remove `pruneEmptyCredentials` from `config.ts` |
+| 5 | `GRAPH_BASE_URL` override added | Lets the suite exercise sending over a real socket against a mock; unset in production | Remove the `optional()` call in `config.ts` |
+| 6 | CLI at `src/testing/cli-webhook.ts`, not `scripts/` | `rootDir` is `src`, and adding `scripts/` to the program broke `tsc` | Move it and set `rootDir` to `.` |
+| 7 | `max_tokens` 8192, streaming | Thinking tokens count against `max_tokens`; a small cap truncates mid-thought | Lower `ANTHROPIC_MAX_TOKENS` in `.env` |
+| 8 | Effort `medium`, not `low` | Tool selection benefits from a step up; plain chat did not | One line in `src/agent/claude.ts` |
+| 9 | Manual tool loop, not the beta Tool Runner | No zod dependency, no beta surface, and each turn can be persisted between iterations | Rewrite `generateReply` around the beta tool runner |
+| 10 | Dedupe moved to SQLite | An in-memory Map forgets on restart and Meta's retries outlive one; with a model behind it a duplicate costs money twice | Restore the Map in `src/core/dedupe.ts` |
+| 11 | History ordered by `rowid`, not `ts` | Inbound rows carry Meta's clock, outbound ours; a late retry scrambles the transcript | Change `ORDER BY` in `queries.ts` |
+| 12 | Window guard inside `sendText` | Covers every send path, including the fallback reply | Move the check into `handler.ts` |
+| 13 | Kill switch in the database, not an env var | Flips without a restart and is reachable from the dashboard | Read an env var in `agentEnabled()` |
+| 14 | Wrong-owner order lookup answers identically to not-found | Saying "that order exists but isn't yours" confirms the id to whoever is asking | Branch on `wrong_phone` in `tools.ts` |
+| 15 | Two dashboard POST routes added | A stop button you must SSH in to press is not a stop button | Delete the routes; the UI degrades to read-only |
+| 16 | Media/vision (section 5.3) not attempted | Stated as stretch; items 1-11 solid was the better trade | Ordinary follow-up work |
+
+**Not done, and why:** section 5.3 media/vision. The plan called it genuinely
+stretch and said 1-11 solid beat 13 shaky. `downloadMedia` already exists, so
+this is a clean starting point rather than a hole.
 
 ---
 

@@ -11,8 +11,9 @@ A customer-support agent on WhatsApp, built on the **Meta WhatsApp Cloud API** w
 | 2 | Webhook verify + signature + echo reply | done |
 | 2.5 | SQLite store + live ops dashboard | done |
 | 3 | Claude in the loop, conversation memory (SQLite) | done |
-| 4 | Business tools (lookup, booking, human handoff) | next |
-| 5 | Media/voice, retries, rate limits, kill switch | todo |
+| 4 | Business tools (lookup, booking, human handoff) | done |
+| 5 | Retries, rate limits, 24h guard, kill switch | done |
+| 5.3 | Media/voice | todo |
 | 6 | Deploy, monitoring | todo |
 
 ## Setup
@@ -59,6 +60,36 @@ Then in **WhatsApp > Configuration > Webhook**:
 
 Message the test number from your phone. You should get `echo: <your text>` back.
 
+## Tests
+
+```bash
+npm test          # node --test, no jest/vitest/tsx in the test path
+npm run typecheck
+```
+
+Tests load `.env.test`, never `.env`: importing any module pulls in `config.ts`,
+which validates env at import time and opens SQLite, so without a separate env
+the suite would run against real Graph credentials and the live conversation
+database.
+
+Two external services are faked and nothing else is:
+
+- `src/testing/mock-graph.ts` speaks Graph's real response shapes over a socket,
+  so chunking, wamid capture, retry and backoff all execute for real.
+- `src/testing/webhook.ts` signs payloads with the real app-secret HMAC rather
+  than bypassing `verifySignature`.
+
+Drive a conversation yourself, no phone or tunnel needed:
+
+```bash
+npm run fake-webhook -- "are you open today?"
+npm run fake-webhook -- "and tomorrow?" --from 15145551234
+```
+
+**Caveat:** the suite runs under Node's strip-only TypeScript mode, which
+rejects `enum`, `namespace`, decorators, and constructor parameter properties.
+None are used; don't introduce them.
+
 ## The agent
 
 `src/agent/` holds everything model-facing; `src/core/handler.ts` just wires it
@@ -68,7 +99,8 @@ to the channel.
 |---|---|
 | `agent/claude.ts` | The Messages API call, error classification, fallbacks |
 | `agent/memory.ts` | Rebuilds conversation history from the store |
-| `agent/prompt.ts` | The system prompt - override with `SYSTEM_PROMPT` |
+| `agent/persona.ts` | Business facts and the system prompt |
+| `agent/tools.ts` | Tool schemas and their executors |
 
 **Credentials.** The client is constructed with no arguments so the SDK's own
 resolution order applies: `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`,
@@ -87,6 +119,11 @@ every message gets more expensive.
 second-resolution send time; outbound rows carry ours. A retried webhook can
 arrive with a timestamp older than replies already stored, so sorting on it
 scrambles the transcript. `rowid` is the order the agent actually saw.
+
+**Tools run in a capped manual loop.** Five iterations maximum - a runaway loop
+is real money. The assistant turn is echoed back verbatim, thinking blocks
+included, and all tool results go back in *one* user message; splitting them
+across several teaches the model to stop making parallel calls.
 
 **Failure is a reply, not an exception.** Refusals, empty completions, auth
 errors, and rate limits all return the fallback message and record an event -
@@ -135,6 +172,15 @@ WhatsApp --webhook--> src/whatsapp/webhook.ts   verify signature, ack 200 fast
 
 The agent layer never sees WhatsApp payload shapes - `webhook.ts` normalizes to
 `InboundMessage` first, so the channel stays swappable.
+
+## Operating it
+
+- **Kill switch** - the `agent: on/off` button on the dashboard. Messages are
+  still received, stored and displayed while it is off; only the reply is
+  withheld, so turning it off never loses a question.
+- **Handoff** - `escalate_to_human` pauses that one conversation and floats it
+  to the top of the dashboard. "Resume agent" clears it.
+- **Spend** - tracked per reply and totalled on the dashboard.
 
 ## Things that will bite you
 
