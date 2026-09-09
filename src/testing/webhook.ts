@@ -19,6 +19,13 @@ export interface TextMessageOptions {
 }
 
 let counter = 0;
+/**
+ * Unique per process. Each test file runs in its own process, so a plain
+ * counter restarts at 1 in every file and collides in the shared database -
+ * where dedupe then correctly treats the second file's first message as one
+ * of Meta's retries and silently drops it.
+ */
+const runId = Math.random().toString(36).slice(2, 8);
 
 export function textMessagePayload(
   text: string,
@@ -26,7 +33,7 @@ export function textMessagePayload(
 ): WebhookPayload {
   const from = options.from ?? "15550001111";
   const message: IncomingMessage = {
-    id: options.id ?? `wamid.TEST${++counter}`,
+    id: options.id ?? `wamid.TEST_${runId}_${++counter}`,
     from,
     timestamp: String(options.timestamp ?? Math.floor(Date.now() / 1000)),
     type: "text",

@@ -1,6 +1,7 @@
 import { config, graphBaseUrl } from "../config.ts";
 import { log } from "../logger.ts";
 import { recordEvent, recordOutbound, windowState } from "../store/db.ts";
+import { outboundLimiter } from "../core/throttle.ts";
 
 const MESSAGES_URL = `${graphBaseUrl}/${config.whatsapp.phoneNumberId}/messages`;
 
@@ -11,33 +12,84 @@ interface GraphError {
   error?: { message: string; type: string; code: number; error_subcode?: number };
 }
 
+const MAX_SEND_ATTEMPTS = 3;
+
+/**
+ * Retries 429s and 5xx with exponential backoff and jitter; never retries a
+ * 4xx, because a malformed request will be just as malformed next time and
+ * retrying it only burns quota.
+ *
+ * Caveat worth knowing: Graph has no idempotency key for text sends, so a
+ * retry after a lost response could deliver twice. Retrying only where no
+ * success response was seen keeps that window small, but it is not zero.
+ */
 async function graphPost(url: string, body: unknown): Promise<unknown> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.whatsapp.accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let lastError = new Error("no attempt made");
 
-  const json = (await res.json().catch(() => ({}))) as GraphError;
+  for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+    await outboundLimiter.take();
 
-  if (!res.ok) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.whatsapp.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      // Network-level failure: no response at all, so retrying is safe-ish.
+      lastError = new Error(`Graph API unreachable: ${String(err)}`);
+      log.warn("graph_unreachable", { attempt, err: String(err) });
+      if (attempt < MAX_SEND_ATTEMPTS) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      break;
+    }
+
+    const json = (await res.json().catch(() => ({}))) as GraphError;
+    if (res.ok) return json;
+
     const err = json.error;
     const fields = {
       status: res.status,
       code: err?.code,
       subcode: err?.error_subcode,
       message: err?.message,
+      attempt,
     };
-    log.error("graph_api_error", fields);
-    recordEvent("error", "graph_api_error", fields);
-    throw new Error(`Graph API ${res.status}: ${err?.message ?? "unknown error"}`);
+
+    const retryable = res.status === 429 || res.status >= 500;
+    if (!retryable || attempt === MAX_SEND_ATTEMPTS) {
+      log.error("graph_api_error", fields);
+      recordEvent("error", "graph_api_error", fields);
+      throw new Error(`Graph API ${res.status}: ${err?.message ?? "unknown error"}`);
+    }
+
+    // Meta's own pacing beats our guess when it bothers to send one.
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : backoffMs(attempt);
+
+    log.warn("graph_retrying", { ...fields, waitMs });
+    await sleep(waitMs);
+    lastError = new Error(`Graph API ${res.status}: ${err?.message ?? "unknown error"}`);
   }
 
-  return json;
+  recordEvent("error", "graph_send_exhausted", { message: lastError.message });
+  throw lastError;
 }
+
+/** Exponential with jitter, so simultaneous failures do not retry in lockstep. */
+function backoffMs(attempt: number): number {
+  return 300 * 2 ** (attempt - 1) + Math.floor(Math.random() * 150);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Send a plain text reply. Long answers are split - WhatsApp rejects

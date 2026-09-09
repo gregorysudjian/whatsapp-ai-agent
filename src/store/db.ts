@@ -50,6 +50,11 @@ db.exec(`
     outbound_count  INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS events (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     ts     INTEGER NOT NULL,
@@ -79,6 +84,14 @@ function addColumns(table: string, columns: Record<string, string>): string[] {
   return added;
 }
 
+const migratedContacts = addColumns("contacts", {
+  // Per-contact pause. Set when a human takes over, so the agent stops
+  // replying in that thread without stopping every other conversation.
+  paused: "INTEGER NOT NULL DEFAULT 0",
+  needs_human: "INTEGER NOT NULL DEFAULT 0",
+  handoff_reason: "TEXT",
+});
+
 const migrated = addColumns("messages", {
   input_tokens: "INTEGER",
   output_tokens: "INTEGER",
@@ -86,7 +99,62 @@ const migrated = addColumns("messages", {
   latency_ms: "INTEGER",
 });
 
-log.info("store_ready", { path: config.dbPath, ...(migrated.length ? { migrated } : {}) });
+const allMigrations = [...migrated, ...migratedContacts];
+log.info("store_ready", {
+  path: config.dbPath,
+  ...(allMigrations.length ? { migrated: allMigrations } : {}),
+});
+
+// --- kill switch ----------------------------------------------------------
+
+const getSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+const putSetting = db.prepare(`
+  INSERT INTO settings (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`);
+
+const AGENT_ENABLED = "agent_enabled";
+
+/**
+ * Global stop. Messages are still received, stored and shown on the
+ * dashboard when this is off - only the reply is withheld - so turning the
+ * agent off never loses a customer's question.
+ *
+ * Defaults to on, and lives in the database rather than an env var so it can
+ * be flipped without a restart.
+ */
+export function agentEnabled(): boolean {
+  const row = getSetting.get(AGENT_ENABLED) as Record<string, unknown> | undefined;
+  return row === undefined ? true : row["value"] !== "0";
+}
+
+export function setAgentEnabled(enabled: boolean): void {
+  putSetting.run(AGENT_ENABLED, enabled ? "1" : "0");
+  recordEvent("warn", enabled ? "agent_enabled" : "agent_disabled");
+}
+
+const pauseStmt = db.prepare(`
+  UPDATE contacts SET paused = ?, needs_human = ?, handoff_reason = ? WHERE wa_id = ?
+`);
+const pausedStmt = db.prepare(`SELECT paused, needs_human FROM contacts WHERE wa_id = ?`);
+
+export function isPaused(waId: string): boolean {
+  const row = pausedStmt.get(waId) as Record<string, unknown> | undefined;
+  return Number(row?.["paused"] ?? 0) === 1;
+}
+
+/** Hand a conversation to a person: agent stops replying there until cleared. */
+export function pauseForHuman(waId: string, reason: string): void {
+  pauseStmt.run(1, 1, reason, waId);
+  recordEvent("warn", "handoff_requested", { waId, reason });
+  publish({ kind: "event", level: "warn", name: "handoff_requested" });
+}
+
+export function clearHandoff(waId: string): void {
+  pauseStmt.run(0, 0, null, waId);
+  recordEvent("info", "handoff_cleared", { waId });
+  publish({ kind: "event", level: "info", name: "handoff_cleared" });
+}
 
 /** Meta's free-form reply window. Outside it, only approved templates send. */
 export const WINDOW_MS = 24 * 60 * 60 * 1000;

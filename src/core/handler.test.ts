@@ -40,15 +40,31 @@ function claudeSaying(text: string): MessagesClient {
 }
 
 /** The webhook acks before replying, so the send lands after the response. */
-async function waitForSends(count: number, timeoutMs = 3000): Promise<void> {
+async function waitFor(
+  what: string,
+  predicate: () => boolean,
+  timeoutMs = 3000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (graph.sentTexts.length < count) {
-    if (Date.now() > deadline) {
-      throw new Error(`expected ${count} send(s), saw ${graph.sentTexts.length}`);
-    }
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+const waitForSends = (count: number) =>
+  waitFor(`${count} send(s)`, () => graph.sentTexts.length >= count);
+
+/**
+ * The mock records a request before our client has parsed the response and
+ * stored the wamid, so waiting on the send alone races the write. Anything
+ * that reads the stored reply must wait for the row.
+ */
+const waitForStoredOutbound = (waId: string, count = 1) =>
+  waitFor(
+    `${count} stored outbound for ${waId}`,
+    () => listMessages(waId).filter((m) => m.direction === "out").length >= count,
+  );
 
 before(async () => {
   await graph.listen(4599);
@@ -76,7 +92,7 @@ test("a signed message is acked fast, then answered", async () => {
   assert.equal(res.status, 200);
   assert.ok(ackMs < 1000, `ack took ${ackMs}ms - Meta retries anything slow`);
 
-  await waitForSends(1);
+  await waitForStoredOutbound(wa);
   assert.deepEqual(graph.sentTexts, ["We're open until 6pm today."]);
 
   // Transcript stored in the order the agent observed it.
@@ -121,7 +137,7 @@ test("Meta's retry of the same message is ignored, not answered twice", async ()
   const payload = textMessagePayload("hello?", { from: wa, id: "wamid.RETRY1" });
 
   await deliver(baseUrl, payload);
-  await waitForSends(1);
+  await waitForStoredOutbound(wa);
 
   await deliver(baseUrl, payload);          // identical redelivery
   await new Promise((r) => setTimeout(r, 200));
@@ -138,7 +154,7 @@ test("concurrent messages from one contact do not interleave", async () => {
     deliver(baseUrl, textMessagePayload("first", { from: wa, id: "wamid.SEQ1" })),
     deliver(baseUrl, textMessagePayload("second", { from: wa, id: "wamid.SEQ2" })),
   ]);
-  await waitForSends(2);
+  await waitForStoredOutbound(wa, 2);
 
   const messages = listMessages(wa);
 
@@ -174,7 +190,7 @@ test("a delivery receipt updates the stored message, sending nothing", async () 
   const wa = "14000000007";
 
   await deliver(baseUrl, textMessagePayload("hey", { from: wa }));
-  await waitForSends(1);
+  await waitForStoredOutbound(wa);
 
   const outbound = listMessages(wa).find((m) => m.direction === "out")!;
   graph.reset();

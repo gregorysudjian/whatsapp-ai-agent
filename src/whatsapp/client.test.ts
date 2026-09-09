@@ -64,9 +64,17 @@ test("a Graph error surfaces as a thrown error, not a silent drop", async () => 
 });
 
 test("markReadAndTyping never throws - it is cosmetic", async () => {
+  // A 5xx is retryable, so this exercises the retry path too: one failure,
+  // one success, and no exception either way.
   graph.script_({ status: 500 });
-  await markReadAndTyping("wamid.whatever");   // must swallow
-  assert.equal(graph.requests.length, 1);
+  await markReadAndTyping("wamid.whatever");
+  assert.equal(graph.requests.length, 2, "retried once, then succeeded");
+});
+
+test("a read receipt that keeps failing is swallowed, not thrown", async () => {
+  graph.script_({ status: 500 }, { status: 500 }, { status: 500 });
+  await markReadAndTyping("wamid.doomed");   // must not reject
+  assert.equal(graph.requests.length, 3, "capped, and the failure stays contained");
 });
 
 test("splitMessage prefers paragraph boundaries", () => {
@@ -103,4 +111,55 @@ test("a send just inside the window still goes through", async () => {
   const wamids = await sendText(wa, "just in time");
   assert.equal(wamids.length, 1);
   assert.deepEqual(graph.sentTexts, ["just in time"]);
+});
+
+test("a 429 is retried and then succeeds", async () => {
+  const wa = "12000000020";
+  openWindow(wa);
+  graph.script_({ status: 429, retryAfter: 0 });   // then success
+
+  const wamids = await sendText(wa, "eventually delivered");
+
+  assert.equal(wamids.length, 1);
+  assert.equal(graph.requests.length, 2, "one failed attempt, one success");
+  assert.deepEqual(graph.sentTexts, ["eventually delivered", "eventually delivered"]);
+});
+
+test("a 500 is retried", async () => {
+  const wa = "12000000021";
+  openWindow(wa);
+  graph.script_({ status: 500 });
+  const wamids = await sendText(wa, "server hiccup");
+  assert.equal(wamids.length, 1);
+  assert.equal(graph.requests.length, 2);
+});
+
+test("a 4xx is never retried - it would fail identically", async () => {
+  const wa = "12000000022";
+  openWindow(wa);
+  graph.script_({ status: 400, error: { message: "bad param", type: "OAuthException", code: 100 } });
+
+  await assert.rejects(() => sendText(wa, "malformed"), /Graph API 400/);
+  assert.equal(graph.requests.length, 1, "a bad request must not be repeated");
+});
+
+test("retries give up rather than looping forever", async () => {
+  const wa = "12000000023";
+  openWindow(wa);
+  graph.script_({ status: 503 }, { status: 503 }, { status: 503 }, { status: 503 });
+
+  await assert.rejects(() => sendText(wa, "always down"), /Graph API 503/);
+  assert.equal(graph.requests.length, 3, "capped at MAX_SEND_ATTEMPTS");
+});
+
+test("Retry-After is honoured over our own backoff", async () => {
+  const wa = "12000000024";
+  openWindow(wa);
+  graph.script_({ status: 429, retryAfter: 1 });
+
+  const started = Date.now();
+  await sendText(wa, "paced by Meta");
+  const elapsed = Date.now() - started;
+
+  assert.ok(elapsed >= 900, `expected ~1s wait from Retry-After, waited ${elapsed}ms`);
 });

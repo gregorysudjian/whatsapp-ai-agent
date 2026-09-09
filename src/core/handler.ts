@@ -1,7 +1,7 @@
 import { sendText, markReadAndTyping } from "../whatsapp/client.ts";
 import { generateReply } from "../agent/claude.ts";
 import { log } from "../logger.ts";
-import { recordEvent, recordUsage } from "../store/db.ts";
+import { agentEnabled, isPaused, recordEvent, recordUsage } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
 
 /**
@@ -20,6 +20,21 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     type: msg.raw.type,
     chars: msg.text.length,
   });
+
+  // Checked before the model call, not after: a paused conversation should
+  // cost nothing. The message is already stored, so nothing is lost - the
+  // dashboard shows it and a human can answer.
+  if (!agentEnabled()) {
+    log.warn("reply_suppressed", { reason: "agent_disabled", from: msg.from });
+    recordEvent("warn", "reply_suppressed", { reason: "agent_disabled", from: msg.from });
+    return;
+  }
+
+  if (isPaused(msg.from)) {
+    log.info("reply_suppressed", { reason: "handed_to_human", from: msg.from });
+    recordEvent("info", "reply_suppressed", { reason: "handed_to_human", from: msg.from });
+    return;
+  }
 
   await markReadAndTyping(msg.id);
 
