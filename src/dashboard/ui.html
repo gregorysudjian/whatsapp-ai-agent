@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp Agent - Dashboard</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #fbfbfc;
+    --border: #e3e6ea;
+    --text: #14181d;
+    --muted: #6b7480;
+    --accent: #1f6feb;
+    --in: #eef1f5;
+    --out: #d8f2dd;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --bad: #cf222e;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --panel: #161b22; --panel-2: #12171e; --border: #2a313c;
+      --text: #e6edf3; --muted: #8b949e; --accent: #4493f8;
+      --in: #21262d; --out: #143224; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--panel);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .spacer { flex: 1; }
+  .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .dot.dead { background: var(--bad); }
+
+  .tiles {
+    display: grid; gap: 10px; padding: 14px 18px;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  }
+  .tile {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .tile .n { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile.alert .n { color: var(--bad); }
+
+  main {
+    display: grid; grid-template-columns: 320px 1fr; gap: 14px;
+    padding: 0 18px 18px; align-items: start;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .panel > h2 {
+    margin: 0; padding: 9px 12px; font-size: 11px; font-weight: 650;
+    text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+    background: var(--panel-2); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .scroll { max-height: 62vh; overflow-y: auto; }
+
+  .convo {
+    display: block; width: 100%; text-align: left; background: none;
+    border: 0; border-bottom: 1px solid var(--border); padding: 9px 12px;
+    cursor: pointer; color: inherit; font: inherit;
+  }
+  .convo:hover { background: var(--panel-2); }
+  .convo[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .convo .row1 { display: flex; align-items: baseline; gap: 8px; }
+  .convo .who { font-weight: 600; }
+  .convo .num { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .convo .prev {
+    color: var(--muted); font-size: 12px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; margin-top: 2px;
+  }
+  .win {
+    font-size: 10px; font-family: var(--mono); padding: 1px 5px;
+    border-radius: 4px; margin-left: auto; white-space: nowrap;
+  }
+  .win.open   { color: var(--ok);   background: color-mix(in srgb, var(--ok) 15%, transparent); }
+  .win.soon   { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+  .win.closed { color: var(--bad);  background: color-mix(in srgb, var(--bad) 15%, transparent); }
+
+  .thread { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: min(72%, 560px); padding: 7px 10px; border-radius: 10px; }
+  .msg.in  { background: var(--in);  align-self: flex-start; border-bottom-left-radius: 3px; }
+  .msg.out { background: var(--out); align-self: flex-end;  border-bottom-right-radius: 3px; }
+  .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg .foot { font-size: 10px; color: var(--muted); font-family: var(--mono); margin-top: 3px; }
+  .msg.failed { outline: 1px solid var(--bad); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 5px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td.t { font-family: var(--mono); color: var(--muted); white-space: nowrap; width: 1px; }
+  td.n { font-weight: 600; white-space: nowrap; width: 1px; }
+  td.d { font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+  tr.warn td.n { color: var(--warn); }
+  tr.error td.n { color: var(--bad); }
+
+  .empty { padding: 26px 14px; text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WhatsApp Agent</h1>
+  <span><span class="dot" id="dot"></span> <span class="meta" id="conn">connecting...</span></span>
+  <span class="spacer"></span>
+  <span class="meta" id="ident"></span>
+  <span class="meta" id="uptime"></span>
+</header>
+
+<section class="tiles" id="tiles"></section>
+
+<main>
+  <div class="panel">
+    <h2>Conversations <span id="convoCount" class="meta"></span></h2>
+    <div class="scroll" id="convos"><div class="empty">No conversations yet.</div></div>
+  </div>
+
+  <div style="display:grid; gap:14px;">
+    <div class="panel">
+      <h2 id="threadTitle">Thread</h2>
+      <div class="scroll thread" id="thread">
+        <div class="empty">Pick a conversation, or wait for a message to arrive.</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Event log</h2>
+      <div class="scroll"><table id="events"></table></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let selected = null;
+let convoCache = [];
+
+const fmtTime = (ms) =>
+  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function ago(ms) {
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+function dur(ms) {
+  if (ms <= 0) return "closed";
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? h + "h " + m + "m" : m + "m";
+}
+
+async function get(path) {
+  const r = await fetch(path, { headers: { accept: "application/json" } });
+  if (!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+const TILES = [
+  ["inbound", "Inbound"], ["outbound", "Outbound"], ["contacts", "Contacts"],
+  ["openWindows", "Open 24h windows"], ["last24h", "Msgs / 24h"],
+  ["failed", "Failed sends", true], ["rejectedSignatures", "Rejected sigs", true],
+  ["graphErrors", "Graph errors", true],
+];
+
+async function loadStats() {
+  const s = await get("api/stats");
+  $("tiles").innerHTML = TILES.map(([k, label, alert]) =>
+    '<div class="tile ' + (alert && s[k] > 0 ? "alert" : "") + '">' +
+    '<div class="n">' + s[k] + '</div><div class="k">' + label + '</div></div>').join("");
+  $("ident").textContent = "phone_id " + s.phoneNumberId + " . " + s.graphVersion;
+  $("uptime").textContent = "up " + dur(s.uptimeSec * 1000).replace("closed", "0m");
+}
+
+async function loadConvos() {
+  convoCache = await get("api/conversations");
+  $("convoCount").textContent = convoCache.length ? "(" + convoCache.length + ")" : "";
+  if (!convoCache.length) {
+    $("convos").innerHTML =
+      '<div class="empty">No conversations yet.<br>Message the test number to populate this.</div>';
+    return;
+  }
+  $("convos").innerHTML = convoCache.map((c) => {
+    const cls = c.windowRemainingMs <= 0 ? "closed"
+      : c.windowRemainingMs < 6 * 3600000 ? "soon" : "open";
+    return '<button class="convo" data-wa="' + esc(c.waId) + '" aria-selected="' +
+      (c.waId === selected) + '">' +
+      '<div class="row1">' +
+        '<span class="who">' + esc(c.name || "Unknown") + '</span>' +
+        '<span class="num">' + esc(c.waId) + '</span>' +
+        '<span class="win ' + cls + '">' + dur(c.windowRemainingMs) + '</span>' +
+      '</div>' +
+      '<div class="prev">' + (c.lastDirection === "out" ? "&#8617; " : "") +
+        esc(c.lastText || "-") + '</div>' +
+      '<div class="prev">' + c.inboundCount + " in . " + c.outboundCount + " out" +
+        (c.lastMessageTs ? " . " + ago(c.lastMessageTs) : "") + '</div>' +
+    '</button>';
+  }).join("");
+  for (const el of document.querySelectorAll(".convo")) {
+    el.onclick = () => selectConvo(el.dataset.wa);
+  }
+  // Land on the most recent thread rather than an empty pane.
+  if (!selected && convoCache[0]) await selectConvo(convoCache[0].waId);
+}
+
+async function selectConvo(waId) {
+  selected = waId;
+  for (const el of document.querySelectorAll(".convo")) {
+    el.setAttribute("aria-selected", String(el.dataset.wa === waId));
+  }
+  const c = convoCache.find((x) => x.waId === waId);
+  $("threadTitle").textContent = ((c && c.name) || "Unknown") + " . " + waId;
+  const msgs = await get("api/conversations/" + encodeURIComponent(waId) + "/messages");
+  if (!msgs.length) {
+    $("thread").innerHTML = '<div class="empty">No messages stored.</div>';
+    return;
+  }
+  $("thread").innerHTML = msgs.map((m) =>
+    '<div class="msg ' + m.direction + " " + (m.status === "failed" ? "failed" : "") + '">' +
+      '<div class="body">' + esc(m.text || "(" + m.type + ")") + '</div>' +
+      '<div class="foot">' + fmtTime(m.ts) + (m.status ? " . " + m.status : "") +
+        (m.error ? " . " + esc(m.error) : "") + '</div>' +
+    '</div>').join("");
+  const t = $("thread");
+  t.scrollTop = t.scrollHeight;
+}
+
+async function loadEvents() {
+  const rows = await get("api/events");
+  $("events").innerHTML = rows.length
+    ? rows.map((e) =>
+        '<tr class="' + esc(e.level) + '">' +
+        '<td class="t">' + fmtTime(e.ts) + '</td>' +
+        '<td class="n">' + esc(e.name) + '</td>' +
+        '<td class="d">' + esc(e.detail || "") + '</td></tr>').join("")
+    : '<tr><td class="empty" colspan="3">No events yet.</td></tr>';
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+// --- live updates ---------------------------------------------------------
+let pending = null;
+function refresh(alsoThread) {
+  clearTimeout(pending);            // coalesce bursts into one round of fetches
+  pending = setTimeout(async () => {
+    await Promise.all([loadStats(), loadConvos(), loadEvents()]);
+    if (alsoThread && selected) await selectConvo(selected);
+  }, 120);
+}
+
+function connect() {
+  const es = new EventSource("api/stream");
+  es.onopen = () => { $("dot").className = "dot live"; $("conn").textContent = "live"; };
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    refresh(ev.kind !== "event" && (!selected || ev.waId === selected));
+  };
+  es.onerror = () => {
+    $("dot").className = "dot dead";
+    $("conn").textContent = "disconnected - retrying";
+    // EventSource reconnects on its own; don't stack a second stream on top.
+  };
+}
+
+refresh(false);
+// ?nostream=1 skips the live stream - an open EventSource keeps a headless
+// browser's page-load pending forever, which blocks screenshot tooling.
+if (!location.search.includes("nostream")) connect();
+setInterval(() => { loadStats(); loadConvos(); }, 30000);  // keeps countdowns honest
+</script>
+</body>
+</html>

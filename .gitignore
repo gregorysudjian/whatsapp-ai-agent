@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.sqlite
+*.sqlite-journal
+# Message history lives here - real conversation content, never commit it.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
