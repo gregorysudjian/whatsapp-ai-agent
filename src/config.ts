@@ -70,8 +70,9 @@ export const config = {
 
   anthropic: {
     model: optional("ANTHROPIC_MODEL", "claude-opus-5"),
-    // Support replies are short by design; this is a ceiling, not a target.
-    maxTokens: Number(optional("ANTHROPIC_MAX_TOKENS", "1024")),
+    // Thinking tokens count against max_tokens, so a WhatsApp-sized cap
+    // would risk truncating mid-thought. Brevity comes from the prompt.
+    maxTokens: Number(optional("ANTHROPIC_MAX_TOKENS", "8192")),
     /**
      * Not `required()`: the SDK also accepts an `ant auth login` profile that
      * lives on disk with no env var set, so absence here is a warning at boot,
