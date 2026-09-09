@@ -1,5 +1,5 @@
 import express, { type Request } from "express";
-import { config } from "./config.ts";
+import { config, prunedCredentials } from "./config.ts";
 import { log } from "./logger.ts";
 import { webhookRouter } from "./whatsapp/webhook.ts";
 import { dashboardRouter } from "./dashboard/router.ts";
@@ -25,6 +25,13 @@ app.use(dashboardRouter);
 
 app.listen(config.port, () => {
   log.info("server_started", { port: config.port });
+
+  if (prunedCredentials.length > 0) {
+    log.warn("empty_credential_vars_pruned", {
+      vars: prunedCredentials,
+      why: "A present-but-empty value shadows every later source in the SDK credential chain.",
+    });
+  }
 
   if (!config.anthropic.hasEnvCredential) {
     log.warn("anthropic_credential_missing", {

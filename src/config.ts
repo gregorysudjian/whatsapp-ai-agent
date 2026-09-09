@@ -5,6 +5,38 @@
 
 import crypto from "node:crypto";
 
+/**
+ * Credential env vars that are present but empty are worse than absent.
+ *
+ * The Anthropic SDK resolves credentials in a fixed order - ANTHROPIC_API_KEY,
+ * then ANTHROPIC_AUTH_TOKEN, then an `ant auth login` profile on disk. An
+ * empty string still occupies its slot: the SDK authenticates with "" and the
+ * profile behind it is never consulted. `.env` files invite exactly this,
+ * because a commented-out key is usually left as `KEY=`.
+ *
+ * Scoped deliberately to the credential chain rather than every empty var -
+ * elsewhere "" can be a legitimate value.
+ */
+export function pruneEmptyCredentials(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const pruned: string[] = [];
+  for (const key of [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+  ]) {
+    if (env[key] !== undefined && env[key]?.trim() === "") {
+      delete env[key];
+      pruned.push(key);
+    }
+  }
+  return pruned;
+}
+
+/** Runs at import, before any SDK client is constructed. */
+export const prunedCredentials = pruneEmptyCredentials();
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value || value.trim() === "") {
@@ -61,4 +93,12 @@ export const config = {
   },
 } as const;
 
-export const graphBaseUrl = `https://graph.facebook.com/${config.whatsapp.graphVersion}`;
+/**
+ * Overridable so the suite can point the client at a local mock and exercise
+ * sending, chunking, wamid capture and retry over a real socket. Unset in
+ * production, where it resolves to the real Graph host.
+ */
+export const graphBaseUrl = optional(
+  "GRAPH_BASE_URL",
+  `https://graph.facebook.com/${config.whatsapp.graphVersion}`,
+);
