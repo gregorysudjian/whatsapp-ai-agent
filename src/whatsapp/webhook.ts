@@ -3,6 +3,7 @@ import { config } from "../config.ts";
 import { log } from "../logger.ts";
 import { verifySignature } from "./signature.ts";
 import { isDuplicate } from "../core/dedupe.ts";
+import { runSerial } from "../core/queue.ts";
 import { handleMessage } from "../core/handler.ts";
 import { recordEvent, recordInbound, recordStatus } from "../store/db.ts";
 import type { IncomingMessage, InboundMessage, WebhookPayload } from "./types.ts";
@@ -68,12 +69,6 @@ async function processPayload(payload: WebhookPayload): Promise<void> {
       );
 
       for (const message of value.messages ?? []) {
-        if (isDuplicate(message.id)) {
-          log.debug("duplicate_ignored", { id: message.id });
-          recordEvent("debug", "duplicate_ignored", { id: message.id });
-          continue;
-        }
-
         const inbound: InboundMessage = {
           id: message.id,
           from: message.from,
@@ -83,12 +78,22 @@ async function processPayload(payload: WebhookPayload): Promise<void> {
           raw: message,
         };
 
-        // Persist before handling: if the handler throws, the message that
-        // caused it is still on the dashboard to look at.
-        recordInbound(inbound);
+        // The dedupe check, the write and the reply are one critical section
+        // per contact. Meta delivers webhooks concurrently, so checking
+        // outside the queue lets two copies of the same message both pass the
+        // check before either has been recorded.
+        await runSerial(inbound.from, async () => {
+          if (isDuplicate(inbound.id)) {
+            log.debug("duplicate_ignored", { id: inbound.id });
+            recordEvent("debug", "duplicate_ignored", { id: inbound.id });
+            return;
+          }
 
-        // Sequential per payload: keeps one user's messages in order.
-        await handleMessage(inbound).catch((err: unknown) => {
+          // Persist before handling: if the handler throws, the message that
+          // caused it is still on the dashboard to look at.
+          recordInbound(inbound);
+          await handleMessage(inbound);
+        }).catch((err: unknown) => {
           log.error("handler_failed", { id: message.id, err: String(err) });
           recordEvent("error", "handler_failed", {
             id: message.id,

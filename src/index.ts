@@ -1,27 +1,9 @@
-import express, { type Request } from "express";
 import { config, prunedCredentials } from "./config.ts";
 import { log } from "./logger.ts";
-import { webhookRouter } from "./whatsapp/webhook.ts";
-import { dashboardRouter } from "./dashboard/router.ts";
+import { createApp } from "./app.ts";
+import { personaIsConfigured } from "./agent/persona.ts";
 
-const app = express();
-
-// Keep the raw bytes around - the signature is computed over them, and
-// JSON.stringify(req.body) is not guaranteed to reproduce them byte for byte.
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      (req as Request & { rawBody?: Buffer }).rawBody = buf;
-    },
-  }),
-);
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
-});
-
-app.use(webhookRouter);
-app.use(dashboardRouter);
+const app = createApp();
 
 app.listen(config.port, () => {
   log.info("server_started", { port: config.port });
@@ -37,6 +19,12 @@ app.listen(config.port, () => {
     log.warn("anthropic_credential_missing", {
       hint: "Set ANTHROPIC_API_KEY in .env (or run `ant auth login`). Until then every reply is the fallback message.",
       model: config.anthropic.model,
+    });
+  }
+
+  if (!personaIsConfigured()) {
+    log.warn("persona_not_configured", {
+      hint: "Edit src/agent/persona.ts - the agent will not state hours, prices or an address it has not been given.",
     });
   }
 

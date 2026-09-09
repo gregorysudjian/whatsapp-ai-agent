@@ -31,6 +31,12 @@ export class MockGraph {
   private script: ScriptedResponse[] = [];
   private server: http.Server | undefined;
   private nextWamid = 1;
+  /**
+   * Per-instance so ids stay unique across test files. wamid is the primary
+   * key in the store and inserts are ON CONFLICT DO NOTHING, so a collision
+   * between two mock instances silently drops rows rather than failing.
+   */
+  private readonly wamidPrefix = Math.random().toString(36).slice(2, 8);
 
   /** Queue responses for the next N requests, in order. */
   script_(...responses: ScriptedResponse[]): void {
@@ -84,7 +90,7 @@ export class MockGraph {
         res.end(JSON.stringify({
           messaging_product: "whatsapp",
           contacts: [{ input: "recipient", wa_id: "recipient" }],
-          messages: [{ id: `wamid.MOCK${this.nextWamid++}` }],
+          messages: [{ id: `wamid.MOCK_${this.wamidPrefix}_${this.nextWamid++}` }],
         }));
       });
     });

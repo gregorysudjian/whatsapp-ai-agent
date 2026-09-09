@@ -20,7 +20,7 @@ test("sendText reaches Graph and stores the returned wamid", async () => {
   // have no row to attach to.
   const stored = listMessages(wa);
   assert.equal(stored.length, 1);
-  assert.match(stored[0]!.id, /^wamid\.MOCK\d+$/);
+  assert.match(stored[0]!.id, /^wamid\.MOCK_/);
   assert.equal(stored[0]!.direction, "out");
 });
 
@@ -33,7 +33,9 @@ test("a reply over 4096 chars is split into several sends", async () => {
   for (const chunk of graph.sentTexts) {
     assert.ok(chunk.length <= 4096, `chunk of ${chunk.length} exceeds WhatsApp's limit`);
   }
-  assert.equal(listMessages(wa).length, graph.sentTexts.length, "each chunk stored");
+  const stored = listMessages(wa);
+  assert.equal(stored.length, graph.sentTexts.length, "each chunk stored");
+  assert.equal(new Set(stored.map((m) => m.id)).size, stored.length, "wamids must be distinct");
 });
 
 test("a Graph error surfaces as a thrown error, not a silent drop", async () => {
