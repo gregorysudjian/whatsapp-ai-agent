@@ -16,6 +16,7 @@ import { subscribe } from "../core/events.ts";
 import {
   listConversations, listEvents, listMessages, listRecentMessages, stats,
 } from "../store/queries.ts";
+import { agentEnabled, clearHandoff, setAgentEnabled } from "../store/db.ts";
 
 export const dashboardRouter: Router = Router();
 
@@ -103,6 +104,26 @@ dashboardRouter.get("/api/recent", (_req, res) => {
 
 dashboardRouter.get("/api/events", (_req, res) => {
   res.json(listEvents(150));
+});
+
+/**
+ * The only two writes on an otherwise read-only surface, both behind the same
+ * token guard. The kill switch has to be reachable from the dashboard - a
+ * stop button you have to SSH in to press is not a stop button.
+ */
+dashboardRouter.post("/api/agent/toggle", (req, res) => {
+  const body = req.body as { enabled?: unknown } | undefined;
+  const next = typeof body?.enabled === "boolean" ? body.enabled : !agentEnabled();
+
+  setAgentEnabled(next);
+  log.warn("agent_toggled", { enabled: next, via: "dashboard" });
+  res.json({ agentEnabled: next });
+});
+
+dashboardRouter.post("/api/conversations/:waId/clear-handoff", (req, res) => {
+  clearHandoff(req.params.waId);
+  log.info("handoff_cleared", { waId: req.params.waId, via: "dashboard" });
+  res.json({ ok: true, waId: req.params.waId });
 });
 
 /** Server-sent events: one line per agent event, so the UI never polls. */

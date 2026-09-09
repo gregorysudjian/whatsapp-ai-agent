@@ -114,6 +114,31 @@
   tr.error td.n { color: var(--bad); }
 
   .empty { padding: 26px 14px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  .toggle {
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    border-radius: 6px; padding: 4px 10px;
+  }
+  .toggle.on  { border-color: var(--ok);  color: var(--ok); }
+  .toggle.off { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  .toggle:hover { filter: brightness(1.15); }
+
+  .badge {
+    font-size: 10px; font-weight: 600; font-family: var(--mono);
+    padding: 1px 5px; border-radius: 4px; margin-left: 6px;
+    color: var(--warn); background: color-mix(in srgb, var(--warn) 20%, transparent);
+  }
+  .convo.needs-human { border-left: 3px solid var(--warn); }
+  .clearBtn {
+    font: inherit; font-size: 11px; cursor: pointer; margin-left: auto;
+    border: 1px solid var(--border); background: var(--panel-2);
+    color: var(--text); border-radius: 5px; padding: 2px 8px;
+  }
+  .banner {
+    padding: 8px 18px; font-size: 13px; font-weight: 600;
+    background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad);
+  }
 </style>
 </head>
 <body>
@@ -123,7 +148,12 @@
   <span class="spacer"></span>
   <span class="meta" id="ident"></span>
   <span class="meta" id="uptime"></span>
+  <button class="toggle" id="agentToggle" type="button">agent: ...</button>
 </header>
+
+<div class="banner" id="disabledBanner" hidden>
+  Agent is OFF - messages are still received and stored, but nothing is being answered.
+</div>
 
 <section class="tiles" id="tiles"></section>
 
@@ -195,6 +225,11 @@ async function loadStats() {
   $("tiles").innerHTML = TILES.map(([k, label, alert]) =>
     '<div class="tile ' + (alert && s[k] > 0 ? "alert" : "") + '">' +
     '<div class="n">' + tileValue(k, s) + '</div><div class="k">' + label + '</div></div>').join("");
+  const toggle = $("agentToggle");
+  toggle.textContent = "agent: " + (s.agentEnabled ? "on" : "OFF");
+  toggle.className = "toggle " + (s.agentEnabled ? "on" : "off");
+  $("disabledBanner").hidden = s.agentEnabled;
+
   $("ident").textContent = "phone_id " + s.phoneNumberId + " . " + s.graphVersion;
   $("uptime").textContent = "up " + dur(s.uptimeSec * 1000).replace("closed", "0m");
 }
@@ -208,12 +243,14 @@ async function loadConvos() {
     return;
   }
   $("convos").innerHTML = convoCache.map((c) => {
+      const handoff = c.needsHuman
+      ? '<span class="badge">needs human</span>' : "";
     const cls = c.windowRemainingMs <= 0 ? "closed"
       : c.windowRemainingMs < 6 * 3600000 ? "soon" : "open";
-    return '<button class="convo" data-wa="' + esc(c.waId) + '" aria-selected="' +
-      (c.waId === selected) + '">' +
+    return '<button class="convo' + (c.needsHuman ? " needs-human" : "") +
+      '" data-wa="' + esc(c.waId) + '" aria-selected="' + (c.waId === selected) + '">' +
       '<div class="row1">' +
-        '<span class="who">' + esc(c.name || "Unknown") + '</span>' +
+        '<span class="who">' + esc(c.name || "Unknown") + handoff + '</span>' +
         '<span class="num">' + esc(c.waId) + '</span>' +
         '<span class="win ' + cls + '">' + dur(c.windowRemainingMs) + '</span>' +
       '</div>' +
@@ -236,7 +273,23 @@ async function selectConvo(waId) {
     el.setAttribute("aria-selected", String(el.dataset.wa === waId));
   }
   const c = convoCache.find((x) => x.waId === waId);
-  $("threadTitle").textContent = ((c && c.name) || "Unknown") + " . " + waId;
+  $("threadTitle").innerHTML =
+    esc(((c && c.name) || "Unknown") + " . " + waId) +
+    (c && c.needsHuman
+      ? '<span class="badge">needs human' +
+        (c.handoffReason ? ": " + esc(c.handoffReason) : "") + "</span>" +
+        '<button class="clearBtn" id="clearHandoff">resume agent</button>'
+      : "");
+
+  const clearBtn = $("clearHandoff");
+  if (clearBtn) {
+    clearBtn.onclick = async (e) => {
+      e.stopPropagation();
+      await fetch("api/conversations/" + encodeURIComponent(waId) + "/clear-handoff",
+        { method: "POST" });
+      refresh(true);
+    };
+  }
   const msgs = await get("api/conversations/" + encodeURIComponent(waId) + "/messages");
   if (!msgs.length) {
     $("thread").innerHTML = '<div class="empty">No messages stored.</div>';
@@ -296,6 +349,16 @@ function connect() {
     // EventSource reconnects on its own; don't stack a second stream on top.
   };
 }
+
+$("agentToggle").onclick = async () => {
+  const s = await get("api/stats");
+  await fetch("api/agent/toggle", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled: !s.agentEnabled }),
+  });
+  refresh(false);
+};
 
 refresh(false);
 // ?nostream=1 skips the live stream - an open EventSource keeps a headless

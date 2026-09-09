@@ -3,7 +3,7 @@
  * db.ts so the write path stays easy to audit.
  */
 
-import { db, WINDOW_MS } from "./db.ts";
+import { agentEnabled, db, WINDOW_MS } from "./db.ts";
 
 export interface ConversationRow {
   waId: string;
@@ -16,19 +16,25 @@ export interface ConversationRow {
   lastDirection: "in" | "out" | null;
   /** ms left in Meta's free-form window; 0 once it has closed. */
   windowRemainingMs: number;
+  needsHuman: boolean;
+  paused: boolean;
+  handoffReason: string | null;
 }
 
 const conversationsStmt = db.prepare(`
   SELECT
     c.wa_id, c.name, c.last_inbound_ts, c.last_message_ts,
     c.inbound_count, c.outbound_count,
+    c.needs_human, c.paused, c.handoff_reason,
     m.text      AS last_text,
     m.direction AS last_direction
   FROM contacts c
   LEFT JOIN messages m ON m.id = (
     SELECT id FROM messages WHERE wa_id = c.wa_id ORDER BY rowid DESC LIMIT 1
   )
-  ORDER BY COALESCE(c.last_message_ts, 0) DESC
+  -- Conversations waiting on a person float to the top: that is the queue
+  -- someone actually has to work through.
+  ORDER BY c.needs_human DESC, COALESCE(c.last_message_ts, 0) DESC
   LIMIT ?
 `);
 
@@ -47,6 +53,9 @@ export function listConversations(limit = 100): ConversationRow[] {
       lastDirection: (str(r["last_direction"]) as "in" | "out" | null) ?? null,
       windowRemainingMs:
         lastInbound === null ? 0 : Math.max(0, lastInbound + WINDOW_MS - now),
+      needsHuman: Number(r["needs_human"] ?? 0) === 1,
+      paused: Number(r["paused"] ?? 0) === 1,
+      handoffReason: str(r["handoff_reason"]),
     };
   });
 }
@@ -150,6 +159,7 @@ const tokenTotals = scalar(`
          COALESCE(AVG(latency_ms),0) AS latency
   FROM messages WHERE input_tokens IS NOT NULL
 `);
+const needsHumanCount = scalar(`SELECT COUNT(*) AS n FROM contacts WHERE needs_human = 1`);
 const openWindows = scalar(
   `SELECT COUNT(*) AS n FROM contacts WHERE COALESCE(last_inbound_ts,0) > ?`,
 );
@@ -168,6 +178,8 @@ export interface Stats {
   outputTokens: number;
   cachedTokens: number;
   avgLatencyMs: number;
+  agentEnabled: boolean;
+  needsHuman: number;
   /** USD, from the published Opus 5 rates. Indicative, not an invoice. */
   estimatedCostUsd: number;
 }
@@ -189,6 +201,8 @@ export function stats(): Stats {
     outputTokens,
     cachedTokens,
     avgLatencyMs: Math.round(num(tokens?.["latency"]) ?? 0),
+    agentEnabled: agentEnabled(),
+    needsHuman: one(needsHumanCount),
     estimatedCostUsd: Number(
       (
         (inputTokens / 1e6) * USD_PER_MTOK_IN +
