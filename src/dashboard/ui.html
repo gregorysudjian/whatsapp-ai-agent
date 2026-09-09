@@ -178,15 +178,23 @@ async function get(path) {
 const TILES = [
   ["inbound", "Inbound"], ["outbound", "Outbound"], ["contacts", "Contacts"],
   ["openWindows", "Open 24h windows"], ["last24h", "Msgs / 24h"],
+  ["cost", "Model spend"], ["latency", "Avg reply"],
   ["failed", "Failed sends", true], ["rejectedSignatures", "Rejected sigs", true],
   ["graphErrors", "Graph errors", true],
 ];
+
+// Derived tiles - formatted rather than raw counts.
+function tileValue(key, s) {
+  if (key === "cost") return "$" + (s.estimatedCostUsd ?? 0).toFixed(2);
+  if (key === "latency") return s.avgLatencyMs ? (s.avgLatencyMs / 1000).toFixed(1) + "s" : "-";
+  return s[key];
+}
 
 async function loadStats() {
   const s = await get("api/stats");
   $("tiles").innerHTML = TILES.map(([k, label, alert]) =>
     '<div class="tile ' + (alert && s[k] > 0 ? "alert" : "") + '">' +
-    '<div class="n">' + s[k] + '</div><div class="k">' + label + '</div></div>').join("");
+    '<div class="n">' + tileValue(k, s) + '</div><div class="k">' + label + '</div></div>').join("");
   $("ident").textContent = "phone_id " + s.phoneNumberId + " . " + s.graphVersion;
   $("uptime").textContent = "up " + dur(s.uptimeSec * 1000).replace("closed", "0m");
 }
@@ -238,6 +246,11 @@ async function selectConvo(waId) {
     '<div class="msg ' + m.direction + " " + (m.status === "failed" ? "failed" : "") + '">' +
       '<div class="body">' + esc(m.text || "(" + m.type + ")") + '</div>' +
       '<div class="foot">' + fmtTime(m.ts) + (m.status ? " . " + m.status : "") +
+        (m.inputTokens != null
+          ? " . " + m.inputTokens + "in/" + m.outputTokens + "out" +
+            (m.cacheReadTokens ? " (" + m.cacheReadTokens + " cached)" : "") +
+            (m.latencyMs ? " . " + (m.latencyMs / 1000).toFixed(1) + "s" : "")
+          : "") +
         (m.error ? " . " + esc(m.error) : "") + '</div>' +
     '</div>').join("");
   const t = $("thread");

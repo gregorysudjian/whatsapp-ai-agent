@@ -61,7 +61,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS events_by_ts ON events (ts DESC);
 `);
 
-log.info("store_ready", { path: config.dbPath });
+/**
+ * Additive migrations. Guarded by PRAGMA rather than try/catch so a real
+ * failure still surfaces, and safe to run against a database that already
+ * holds live conversation history.
+ */
+function addColumns(table: string, columns: Record<string, string>): string[] {
+  const existing = new Set(
+    db.prepare(`PRAGMA table_info(${table})`).all().map((r) => String(r["name"])),
+  );
+  const added: string[] = [];
+  for (const [name, decl] of Object.entries(columns)) {
+    if (existing.has(name)) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${decl}`);
+    added.push(name);
+  }
+  return added;
+}
+
+const migrated = addColumns("messages", {
+  input_tokens: "INTEGER",
+  output_tokens: "INTEGER",
+  cache_read_tokens: "INTEGER",
+  latency_ms: "INTEGER",
+});
+
+log.info("store_ready", { path: config.dbPath, ...(migrated.length ? { migrated } : {}) });
 
 /** Meta's free-form reply window. Outside it, only approved templates send. */
 export const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -124,6 +149,31 @@ export function recordStatus(status: MessageStatus): void {
     status.id,
   );
   publish({ kind: "status", waId: status.recipient_id, id: status.id, status: status.status });
+}
+
+const usageStmt = db.prepare(`
+  UPDATE messages
+  SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, latency_ms = ?
+  WHERE id = ?
+`);
+
+export interface RecordedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  latencyMs: number;
+}
+
+/**
+ * Attach model cost to the reply it produced. Kept on the message rather than
+ * a separate table so "what did this conversation cost" is one query, and so
+ * cost is visible per answer instead of as a monthly surprise.
+ */
+export function recordUsage(messageId: string, usage: RecordedUsage): void {
+  usageStmt.run(
+    usage.inputTokens, usage.outputTokens, usage.cacheReadTokens,
+    usage.latencyMs, messageId,
+  );
 }
 
 const insertEvent = db.prepare(

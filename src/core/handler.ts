@@ -1,7 +1,7 @@
 import { sendText, markReadAndTyping } from "../whatsapp/client.ts";
 import { generateReply } from "../agent/claude.ts";
 import { log } from "../logger.ts";
-import { recordEvent } from "../store/db.ts";
+import { recordEvent, recordUsage } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
 
 /**
@@ -37,5 +37,10 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     recordEvent("warn", "fallback_reply_sent", { to: msg.from, id: msg.id });
   }
 
-  await sendText(msg.from, reply.text);
+  const wamids = await sendText(msg.from, reply.text);
+
+  // Attached to the first chunk: a split reply is one model call, and
+  // duplicating its cost across chunks would overstate spend.
+  const first = wamids[0];
+  if (first && reply.usage) recordUsage(first, reply.usage);
 }

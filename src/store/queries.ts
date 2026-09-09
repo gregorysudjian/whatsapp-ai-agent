@@ -61,6 +61,10 @@ export interface MessageRow {
   ts: number;
   status: string | null;
   error: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  latencyMs: number | null;
 }
 
 /**
@@ -73,7 +77,8 @@ export interface MessageRow {
  * order is what the agent actually observed, which is what history must be.
  */
 const messagesStmt = db.prepare(`
-  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error
+  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
+         input_tokens, output_tokens, cache_read_tokens, latency_ms
   FROM messages WHERE wa_id = ? ORDER BY rowid ASC LIMIT ?
 `);
 
@@ -82,7 +87,8 @@ export function listMessages(waId: string, limit = 500): MessageRow[] {
 }
 
 const recentStmt = db.prepare(`
-  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error
+  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
+         input_tokens, output_tokens, cache_read_tokens, latency_ms
   FROM messages ORDER BY rowid DESC LIMIT ?
 `);
 
@@ -101,6 +107,10 @@ function toMessage(r: Record<string, unknown>): MessageRow {
     ts: num(r["ts"]) ?? 0,
     status: str(r["status"]),
     error: str(r["error"]),
+    inputTokens: num(r["input_tokens"]),
+    outputTokens: num(r["output_tokens"]),
+    cacheReadTokens: num(r["cache_read_tokens"]),
+    latencyMs: num(r["latency_ms"]),
   };
 }
 
@@ -133,6 +143,13 @@ const failedOut = scalar(`SELECT COUNT(*) AS n FROM messages WHERE status='faile
 const contactCount = scalar(`SELECT COUNT(*) AS n FROM contacts`);
 const since = scalar(`SELECT COUNT(*) AS n FROM messages WHERE ts > ?`);
 const eventCount = scalar(`SELECT COUNT(*) AS n FROM events WHERE name = ?`);
+const tokenTotals = scalar(`
+  SELECT COALESCE(SUM(input_tokens),0) AS input,
+         COALESCE(SUM(output_tokens),0) AS output,
+         COALESCE(SUM(cache_read_tokens),0) AS cached,
+         COALESCE(AVG(latency_ms),0) AS latency
+  FROM messages WHERE input_tokens IS NOT NULL
+`);
 const openWindows = scalar(
   `SELECT COUNT(*) AS n FROM contacts WHERE COALESCE(last_inbound_ts,0) > ?`,
 );
@@ -147,11 +164,38 @@ export interface Stats {
   rejectedSignatures: number;
   graphErrors: number;
   uptimeSec: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  avgLatencyMs: number;
+  /** USD, from the published Opus 5 rates. Indicative, not an invoice. */
+  estimatedCostUsd: number;
 }
+
+/** Opus 5 list prices, per million tokens. */
+const USD_PER_MTOK_IN = 5;
+const USD_PER_MTOK_OUT = 25;
+const USD_PER_MTOK_CACHED = 0.5; // cache reads bill at ~0.1x input
 
 export function stats(): Stats {
   const dayAgo = Date.now() - WINDOW_MS;
+  const tokens = tokenTotals.get() as Record<string, unknown> | undefined;
+  const inputTokens = num(tokens?.["input"]) ?? 0;
+  const outputTokens = num(tokens?.["output"]) ?? 0;
+  const cachedTokens = num(tokens?.["cached"]) ?? 0;
+
   return {
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    avgLatencyMs: Math.round(num(tokens?.["latency"]) ?? 0),
+    estimatedCostUsd: Number(
+      (
+        (inputTokens / 1e6) * USD_PER_MTOK_IN +
+        (outputTokens / 1e6) * USD_PER_MTOK_OUT +
+        (cachedTokens / 1e6) * USD_PER_MTOK_CACHED
+      ).toFixed(4),
+    ),
     inbound: one(totalIn),
     outbound: one(totalOut),
     failed: one(failedOut),

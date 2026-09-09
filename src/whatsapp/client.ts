@@ -42,8 +42,13 @@ async function graphPost(url: string, body: unknown): Promise<unknown> {
 /**
  * Send a plain text reply. Long answers are split - WhatsApp rejects
  * anything over 4096 chars outright rather than truncating.
+ *
+ * Returns the wamids Graph assigned, so the caller can attach model usage to
+ * the reply it paid for.
  */
-export async function sendText(to: string, body: string): Promise<void> {
+export async function sendText(to: string, body: string): Promise<string[]> {
+  const wamids: string[] = [];
+
   for (const chunk of splitMessage(body)) {
     const result = (await graphPost(MESSAGES_URL, {
       messaging_product: "whatsapp",
@@ -57,11 +62,17 @@ export async function sendText(to: string, body: string): Promise<void> {
     // by that id, so without storing it now a "failed" status has nothing to
     // attach to and the dashboard shows a send that never resolves.
     const wamid = result.messages?.[0]?.id;
-    if (wamid) recordOutbound(wamid, to, chunk);
-    else log.warn("send_missing_wamid", { to });
+    if (wamid) {
+      recordOutbound(wamid, to, chunk);
+      wamids.push(wamid);
+    } else {
+      log.warn("send_missing_wamid", { to });
+    }
 
     log.info("message_sent", { to, chars: chunk.length, id: wamid });
   }
+
+  return wamids;
 }
 
 /**
