@@ -1,0 +1,4 @@
+# Keep line endings stable across machines - without this every file shows as
+# modified on a Windows checkout with core.autocrlf enabled.
+* text=auto eol=lf
+*.png binary

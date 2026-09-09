@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file=.env dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretest": "node -e \"for (const f of ['data/test.db','data/test.db-wal','data/test.db-shm']) require('fs').rmSync(f,{force:true})\"",
+    "test": "node --env-file=.env.test --test --test-concurrency=1 --test-reporter=spec \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
