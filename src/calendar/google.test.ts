@@ -20,7 +20,9 @@ import { listAudit } from "../store/audit.ts";
 import { setUserActive } from "../store/users.ts";
 import {
   availableSlotsWithCalendar, calendarIdle, calendarStatus, finishConnect, forgetCalendarCaches, startCalendarSync, startConnect,
+  stateBinding,
 } from "./google.ts";
+import { executeTool } from "../agent/tools.ts";
 
 const google = new MockGoogle();
 let server: Server;
@@ -65,9 +67,10 @@ async function connect(code: string, email = "owner@gmail.test", refreshToken = 
   const url = new URL(String(start.json["url"]));
   google.codes.set(code, { email, refreshToken });
   const state = url.searchParams.get("state")!;
-  // No cookie: the browser doesn't send a SameSite=Strict cookie on Google's redirect back.
-  const res = await fetch(`${base}/api/google/callback?code=${code}&state=${encodeURIComponent(state)}`, { redirect: "manual" });
-  return { url, state, status: res.status, location: res.headers.get("location") ?? "" };
+  // The browser brings back only the Lax binding cookie; the Strict session cookie stays home.
+  const binding = start.headers.getSetCookie().find((c) => c.startsWith("wa_oauth="))!.split(";")[0]!;
+  const res = await fetch(`${base}/api/google/callback?code=${code}&state=${encodeURIComponent(state)}`, { redirect: "manual", headers: { cookie: binding } });
+  return { url, state, binding, status: res.status, location: res.headers.get("location") ?? "" };
 }
 
 // --- connecting ---------------------------------------------------------------------------
@@ -100,21 +103,38 @@ test("a state works once, can't be invented, and expires", async () => {
   const first = await connect("code-2");
   assert.equal(first.status, 303);
   google.codes.set("code-3", { email: "x@gmail.test", refreshToken: "other-refresh-00000000" });
-  const again = await fetch(`${base}/api/google/callback?code=code-3&state=${encodeURIComponent(first.state)}`, { redirect: "manual" });
+  const again = await fetch(`${base}/api/google/callback?code=code-3&state=${encodeURIComponent(first.state)}`, { redirect: "manual", headers: { cookie: first.binding } });
   assert.equal(again.headers.get("location"), "/?google=bad_state", "the same state twice is refused");
 
-  const forged = await fetch(`${base}/api/google/callback?code=code-3&state=made-up-state`, { redirect: "manual" });
+  const forged = await fetch(`${base}/api/google/callback?code=code-3&state=made-up-state`, { redirect: "manual", headers: { cookie: `wa_oauth=${stateBinding("made-up-state")}` } });
   assert.equal(forged.headers.get("location"), "/?google=bad_state");
 
   const old = new URL(startConnect(G, owner.user.id, Date.now() - 11 * 60_000)).searchParams.get("state")!;
-  await assert.rejects(finishConnect("code-3", old), /expired_state/);
+  await assert.rejects(finishConnect("code-3", old, stateBinding(old)), /expired_state/);
 
   // A state made for someone who has since lost access is worthless too.
   const other = await makeUser("owner", G);
   const theirs = new URL(startConnect(G, other.user.id)).searchParams.get("state")!;
   setUserActive(other.user.id, false);
-  await assert.rejects(finishConnect("code-3", theirs), /bad_state/);
+  await assert.rejects(finishConnect("code-3", theirs, stateBinding(theirs)), /bad_state/);
   assert.equal(calendarStatus(G).email, "owner@gmail.test", "nothing was overwritten by any of that");
+});
+
+test("a consent link opened in another browser is refused, and the right browser can still use it", async () => {
+  const start = await call(base, `/api/b/${G}/google/connect`, { method: "POST", cookie: owner.cookie, body: {} });
+  const state = new URL(String(start.json["url"])).searchParams.get("state")!;
+  google.codes.set("code-other", { email: "someone-else@gmail.test", refreshToken: "someone-elses-refresh-000" });
+  // Someone was sent the link: their browser has no binding cookie, or another flow's.
+  for (const cookie of [undefined, `wa_oauth=${stateBinding("another-state")}`]) {
+    const res = await fetch(`${base}/api/google/callback?code=code-other&state=${encodeURIComponent(state)}`, {
+      redirect: "manual", ...(cookie ? { headers: { cookie } } : {}),
+    });
+    assert.equal(res.headers.get("location"), "/?google=wrong_browser");
+  }
+  assert.equal(calendarStatus(G).email, "owner@gmail.test", "their calendar was not linked");
+  const binding = start.headers.getSetCookie().find((c) => c.startsWith("wa_oauth="))!.split(";")[0]!;
+  assert.match(binding, /HttpOnly|wa_oauth=/);
+  assert.match(start.headers.getSetCookie().find((c) => c.startsWith("wa_oauth="))!, /SameSite=Lax/i);
 });
 
 test("an owner can't start a connection for another business", async () => {
@@ -199,6 +219,31 @@ test("the owner's busy time is not offered, and free/busy is cached for two minu
 
   await availableSlotsWithCalendar(G, quiet, { serviceId: svc });
   assert.equal(google.requests.filter((r) => r.path === "/calendar/v3/freeBusy").length, 1, "served from the cache");
+});
+
+test("the agent can't book over busy calendar time, even at a time it was never offered", async () => {
+  forgetCalendarCaches();
+  const d = wallClockNow("UTC", Date.now() + 15 * 86_400_000).slice(0, 10);
+  google.busy = [{ start: `${d}T13:00:00Z`, end: `${d}T14:00:00Z` }];
+  const me = { businessId: G, waId: "15550009876", senderName: "Gus" };
+  const out = await executeTool("create_booking", { service_id: svc, start: `${d}T13:30`, name: "Gus", notes: "" }, me);
+  assert.match(out.content, /Booking failed.*taken/);
+  const ok = await executeTool("create_booking", { service_id: svc, start: `${d}T14:00`, name: "Gus", notes: "" }, me);
+  assert.match(ok.content, /^Booked\./);
+  const id = Number(/booking_id (\d+)/.exec(ok.content)![1]);
+  const move = await executeTool("reschedule_my_booking", { booking_id: id, start: `${d}T12:30` }, me);
+  assert.match(move.content, /Could not reschedule.*taken/, "12:30-13:30 runs into the busy hour");
+  await calendarIdle();
+});
+
+test("a booking created and cancelled at once leaves no event behind", async () => {
+  const made = createBooking(G, { waId: null, customerName: "Hal", serviceId: svc, start: `${day}T09:00`, source: "owner" });
+  assert.ok(made.ok);
+  // Cancelled before Google has answered the create.
+  updateBooking(G, made.ok ? made.booking.id : 0, { status: "cancelled" }, "owner");
+  await calendarIdle();
+  assert.equal(google.events.size, 0, "created, then deleted - in that order");
+  assert.equal(getBooking(G, made.ok ? made.booking.id : 0)!.calendarEventId, null);
 });
 
 test("if free/busy can't be read, bookings still work from the dashboard's own calendar", async () => {

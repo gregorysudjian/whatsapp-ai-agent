@@ -8,9 +8,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { log } from "../logger.ts";
 import { recordEvent, pauseForHuman, type BusinessId } from "../store/db.ts";
-import { availableSlotsWithCalendar } from "../calendar/google.ts";
+import { availableSlotsWithCalendar, calendarConflict } from "../calendar/google.ts";
 import {
-  cancelForCustomer, createBooking, rescheduleForCustomer, upcomingForCustomer,
+  cancelForCustomer, createBooking, getBooking, rescheduleForCustomer, upcomingForCustomer,
   type Booking, type BookingFailure,
 } from "../store/bookings.ts";
 import { getBusiness } from "../store/businesses.ts";
@@ -184,6 +184,12 @@ export async function executeTool(
     }
 
     case "create_booking": {
+      const start = String(args["start"] ?? "");
+      const svc = getService(ctx.businessId, Number(args["service_id"]));
+      // Availability hides busy calendar time, but the model may ask for a time it was never offered.
+      if (svc && await calendarConflict(ctx.businessId, start, svc.durationMin)) {
+        return { content: `Booking failed. ${WHY.taken} Offer an alternative.` };
+      }
       const result = createBooking(ctx.businessId, {
         // Whose booking it is comes from the verified webhook, never from input.
         waId: ctx.waId,
@@ -213,6 +219,10 @@ export async function executeTool(
     }
 
     case "reschedule_my_booking": {
+      const current = getBooking(ctx.businessId, Number(args["booking_id"]));
+      if (current && current.waId === ctx.waId && await calendarConflict(ctx.businessId, String(args["start"] ?? ""), current.durationMin)) {
+        return { content: `Could not reschedule. ${WHY.taken} Offer an alternative.` };
+      }
       const result = rescheduleForCustomer(ctx.businessId, ctx.waId, Number(args["booking_id"]), String(args["start"] ?? ""));
       if (result.ok) return { content: `Moved. ${describe(result.booking)} Confirm the new time to the customer.` };
       return { content: `Could not reschedule. ${WHY[result.reason]} Offer an alternative.` };

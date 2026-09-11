@@ -194,6 +194,9 @@ export async function handleBookingButton(businessId: BusinessId, msg: InboundMe
     reply = words.cancelled(day, time);
   }
 
+  // Paused means no automatic messages; the booking change above still stands,
+  // and the owner sees it on the Bookings page.
+  if (!agentEnabled(businessId)) return true;
   try {
     // The customer has just tapped, so the 24h window is open.
     await sendText(businessId, msg.from, reply, { sender: "system" });

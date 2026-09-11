@@ -15,8 +15,9 @@ import { getBusiness, updateBusinessProfile } from "../store/businesses.ts";
 import { listContacts, listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
 import { toCsv } from "./csv.ts";
 import { renderMonthlyReport, reportData } from "../reports/monthly.ts";
-import { availableSlotsWithCalendar, calendarStatus, disconnect, googleConfigured, startConnect, syncBooking } from "../calendar/google.ts";
-import { eraseContact, purgeBusiness } from "../store/privacy.ts";
+import { availableSlotsWithCalendar, calendarStatus, deleteEvent, disconnect, googleConfigured, startConnect, stateBinding } from "../calendar/google.ts";
+import { OAUTH_COOKIE, oauthCookieOptions } from "./oauth-cookie.ts";
+import { eraseContact, holdsNumber, purgeBusiness } from "../store/privacy.ts";
 import {
   agentEnabled, contactExists, db, handBack, isPaused, setAgentEnabled, takeOver, windowState,
 } from "../store/db.ts";
@@ -533,7 +534,8 @@ businessRouter.get("/contacts.csv", (req: Request, res: Response) => {
     when(c.firstSeen), when(c.lastMessageTs), c.inbound, c.outbound, c.bookings,
     c.control === "human" ? (lang === "fr" ? "Une personne" : "A person") : (lang === "fr" ? "L'agent" : "The agent"),
   ]));
-  record(req, "contacts_exported", undefined, { rows: contacts.length, q: input.q || undefined });
+  // Whether it was filtered, not the search itself: that is often a name or a number.
+  record(req, "contacts_exported", undefined, { rows: contacts.length, filtered: Boolean(input.q) });
   const date = wallClockNow(business.timezone).slice(0, 10);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="contacts-${date}.csv"`);
@@ -594,6 +596,7 @@ businessRouter.post("/google/connect", (req: Request, res: Response) => {
     return;
   }
   const url = startConnect(bid, getAuth(req).user.id);
+  res.cookie(OAUTH_COOKIE, stateBinding(new URL(url).searchParams.get("state")!), oauthCookieOptions());
   record(req, "calendar_connect_started");
   res.json({ url });
 });
@@ -620,16 +623,25 @@ businessRouter.post("/privacy/purge", (req: Request, res: Response) => {
  * contact, and their number in this business's events and audit trail. The
  * body must say so explicitly - a stray POST should not erase anyone.
  */
-businessRouter.post("/contacts/:waId/erase", (req: Request, res: Response) => {
+businessRouter.post("/contacts/:waId/erase", async (req: Request, res: Response) => {
   const input = body(z.object({ confirm: z.literal(true) }).strict(), req, res);
   if (!input) return;
-  const waId = waIdOf(req, res);
-  if (!waId) return;
+  const raw = req.params["waId"];
   const bid = businessOf(req);
+  // Also a number that never wrote in but has bookings (an owner booked someone who phoned).
+  if (typeof raw !== "string" || !/^\d{5,20}$/.test(raw) || !holdsNumber(bid, raw)) {
+    res.status(404).json({ error: "conversation_not_found" });
+    return;
+  }
+  const waId = raw;
   const { counts, calendarBookings } = eraseContact(bid, waId);
-  // Calendar events of erased bookings go too (in the background, like any sync).
-  for (const b of calendarBookings) void syncBooking(bid, { ...b, status: "cancelled" });
+  // Their calendar events carry the name and notes: removed now, and the owner
+  // is told about any that couldn't be (the booking rows are already gone).
+  let calendarEventsLeft = 0;
+  for (const b of calendarBookings) {
+    if (!(await deleteEvent(bid, b.calendarEventId!))) calendarEventsLeft++;
+  }
   // The record of the erasure names nobody: the last digits are enough to answer "did you do it?".
-  record(req, "contact_erased", `…${waId.slice(-4)}`, { ...counts });
-  res.json({ erased: counts });
+  record(req, "contact_erased", `…${waId.slice(-4)}`, { ...counts, calendarEventsLeft });
+  res.json({ erased: counts, calendarEventsLeft });
 });

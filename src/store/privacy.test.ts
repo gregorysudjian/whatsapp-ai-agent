@@ -128,6 +128,21 @@ test("erasing a customer removes everything about that number here, and nothing 
   assert.equal(again.status, 404);
 });
 
+test("a number that only has bookings (the owner booked someone who phoned) can be erased too", async () => {
+  const wa = "15140000077";
+  booking.run(P, wa, "2030-01-01T10:00", "2030-01-01T11:00");
+  const res = await call(base, `/api/b/${P}/contacts/${wa}/erase`, { method: "POST", cookie: owner.cookie, body: { confirm: true } });
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+  assert.equal((res.json["erased"] as Record<string, unknown>)["bookings"], 1);
+});
+
+test("erasing a number leaves the events of a longer number that contains it", async () => {
+  event.run(P, NOW, JSON.stringify({ waId: "151400000991" }));
+  contact.run(P, "15140000099", NOW, NOW);
+  await call(base, `/api/b/${P}/contacts/15140000099/erase`, { method: "POST", cookie: owner.cookie, body: { confirm: true } });
+  assert.equal(count(`SELECT COUNT(*) AS n FROM events WHERE business_id = ? AND detail LIKE '%151400000991%'`, P), 1);
+});
+
 test("privacy settings are validated", async () => {
   for (const privacy of [{ retentionMonths: 0, aiDisclosure: true, privacyUrl: "" }, { retentionMonths: 12, aiDisclosure: true, privacyUrl: "javascript:alert(1)" }]) {
     const res = await call(base, `/api/b/${P}/settings`, { method: "PUT", cookie: owner.cookie, body: { settings: { ...getSettings(P), privacy } } });

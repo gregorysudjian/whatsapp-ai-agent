@@ -71,8 +71,19 @@ export interface EraseCounts { messages: number; bookings: number; events: numbe
 const eraseMessages = db.prepare(`DELETE FROM messages WHERE business_id = ? AND wa_id = ?`);
 const bookingsOf = db.prepare(`SELECT id FROM bookings WHERE business_id = ? AND wa_id = ?`);
 const eraseBookings = db.prepare(`DELETE FROM bookings WHERE business_id = ? AND wa_id = ?`);
-// Event details carry the number ({"waId": ...}, {"from": ...}, {"to": ...}).
-const eraseEvents = db.prepare(`DELETE FROM events WHERE business_id = ? AND detail LIKE ?`);
+// Event details carry the number as {"waId"}, {"from"} or {"to"}: matched exactly,
+// so erasing 1514555 leaves the events of 15145550001 alone.
+const eraseEvents = db.prepare(`
+  DELETE FROM events WHERE business_id = ?1 AND json_valid(detail)
+    AND (json_extract(detail, '$.waId') = ?2 OR json_extract(detail, '$.from') = ?2 OR json_extract(detail, '$.to') = ?2)
+`);
+const hasBookingsStmt = db.prepare(`SELECT 1 AS hit FROM bookings WHERE business_id = ? AND wa_id = ? LIMIT 1`);
+const hasContactStmt = db.prepare(`SELECT 1 AS hit FROM contacts WHERE business_id = ? AND wa_id = ?`);
+
+/** Anything to erase? A number may only have bookings (an owner booked someone who phoned). */
+export function holdsNumber(bid: BusinessId, waId: string): boolean {
+  return hasContactStmt.get(bid, waId) !== undefined || hasBookingsStmt.get(bid, waId) !== undefined;
+}
 const eraseContactRow = db.prepare(`DELETE FROM contacts WHERE business_id = ? AND wa_id = ?`);
 // The audit trail keeps that something happened, not who it happened to.
 const redactAudit = db.prepare(`UPDATE audit_log SET target = '[erased]' WHERE business_id = ? AND target = ?`);
@@ -91,7 +102,7 @@ export function eraseContact(bid: BusinessId, waId: string): { counts: EraseCoun
     const counts: EraseCounts = {
       messages: Number(eraseMessages.run(bid, waId).changes),
       bookings: Number(eraseBookings.run(bid, waId).changes),
-      events: Number(eraseEvents.run(bid, `%${waId}%`).changes),
+      events: Number(eraseEvents.run(bid, waId).changes),
       contact: Number(eraseContactRow.run(bid, waId).changes) === 1,
     };
     redactAudit.run(bid, waId);

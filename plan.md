@@ -602,5 +602,14 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D14, automatic backup before a schema change** at boot (VACUUM INTO data/backups/), plus
   `npm run backup`. `npm start` uses `--env-file-if-exists`. The Dockerfile is untested (no
   Docker on this machine).
+- **Final review (independent agent, read-only):** no critical/high issues; isolation, auth and
+  injection confirmed sound. Fixed: OAuth state now also bound to the starting browser (a
+  SameSite=Lax cookie with the state's hash); the agent can't book or move into busy calendar
+  time; numbers with only bookings can be erased; erasure deletes calendar events synchronously
+  and reports any left; exact-match event erasure; no search text in export audits; a service
+  swap at the same time no longer re-sends a reminder; paused agent -> no button replies; syncs
+  of one booking run in order. Left (in MORNING section 5): a retry queue for calendar deletions
+  that fail, a reminder right after a customer moves a booking into the window, and billing
+  totals that shrink when old messages are purged.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

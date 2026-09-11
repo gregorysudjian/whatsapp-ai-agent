@@ -10,6 +10,8 @@
 
 import { Router, type Request, type Response } from "express";
 import { CalendarError, finishConnect } from "../calendar/google.ts";
+import { readCookie } from "../auth/middleware.ts";
+import { OAUTH_COOKIE, oauthCookieOptions } from "./oauth-cookie.ts";
 import { audit } from "../store/audit.ts";
 import { clientIp } from "../auth/middleware.ts";
 import { log } from "../logger.ts";
@@ -20,6 +22,9 @@ googleRouter.get("/callback", async (req: Request, res: Response) => {
   const q = req.query;
   const state = typeof q["state"] === "string" ? q["state"] : "";
   const code = typeof q["code"] === "string" ? q["code"] : "";
+  // Single use, like the state it vouches for.
+  const binding = readCookie(req, OAUTH_COOKIE);
+  res.clearCookie(OAUTH_COOKIE, oauthCookieOptions());
   const back = (bid: number | null, outcome: string) =>
     res.redirect(303, bid ? `/b/${bid}/settings?tab=calendar&google=${encodeURIComponent(outcome)}` : `/?google=${encodeURIComponent(outcome)}`);
 
@@ -29,7 +34,7 @@ googleRouter.get("/callback", async (req: Request, res: Response) => {
     return;
   }
   try {
-    const { businessId, userId } = await finishConnect(code, state);
+    const { businessId, userId } = await finishConnect(code, state, binding);
     audit({ userId, businessId, action: "calendar_connected", target: null, detail: null, ip: clientIp(req) });
     back(businessId, "connected");
   } catch (err) {

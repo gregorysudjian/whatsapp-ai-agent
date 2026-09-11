@@ -179,6 +179,19 @@ test("a moved booking is reminded again for its new time", async () => {
   assert.ok(remindedIds().includes(b.id));
 });
 
+test("changing only the service (same start) doesn't send a second reminder", async () => {
+  const b = booking(16.2); // an hour no other test books near, so the longer service fits
+  await runReminders();
+  assert.ok(remindedIds().includes(b.id));
+  const longer = createService(R, { name: "Long check-in", durationMin: 6, priceCents: null, currency: "CAD" }).id;
+  const r = updateBooking(R, b.id, { serviceId: longer }, "owner");
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.ok(getBooking(R, b.id)!.reminderSentAt, "still reminded");
+  graph.reset();
+  await runReminders();
+  assert.ok(!remindedIds().includes(b.id));
+});
+
 // --- the customer's answer ---------------------------------------------------------
 
 async function tap(from: string, payload: string, label = "Confirm") {
@@ -220,6 +233,18 @@ test("a button for someone else's booking - or another business's - is ignored",
   const elsewhere = booking(12, { bid: Q, waId: "16660008888" });
   await tap("16660008888", `cancel:${elsewhere.id}`, "Cancel");
   assert.equal(getBooking(Q, elsewhere.id)!.status, "booked", "a booking id from another business does nothing here");
+});
+
+test("with the agent paused, a tap still updates the booking but gets no automatic reply", async () => {
+  const b = booking(10.5);
+  setAgentEnabled(R, false);
+  try {
+    await tap(b.waId!, `confirm:${b.id}`);
+    assert.equal(getBooking(R, b.id)!.status, "confirmed");
+    assert.equal(graph.sentTexts.length, 0);
+  } finally {
+    setAgentEnabled(R, true);
+  }
 });
 
 test("the reply follows the reminder's language", async () => {

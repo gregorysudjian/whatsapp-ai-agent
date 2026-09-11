@@ -288,6 +288,14 @@ the dashboard.
 - **D5:** the inbox updates live, but a person typing a reply is not shown to other people
   looking at the same chat (no "someone is typing" or locking). Two people can both take over;
   the last one is shown as the owner.
+- **Billing history shrinks with retention:** usage & billing figures (and old PDFs) are counted
+  from the messages table, so months older than the retention period read lower after the
+  clean-up. Export the usage CSV each month for your records; a permanent monthly total is a
+  small follow-up.
+- **Calendar after erasure:** if Google can't be reached when a customer is erased, the dashboard
+  says how many events are left to delete by hand; it doesn't retry by itself.
+- **A reminder right after a move:** a customer who moves their booking into the reminder window
+  gets the reminder straight away.
 - **D6:** one booking at a time per business (a single room or teacher). A business that runs
   two classes at once would need a "capacity" per service; not built.
 - **D6:** the bookings page refreshes when you come back to the tab, not live while you watch it.

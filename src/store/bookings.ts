@@ -403,8 +403,9 @@ export function updateBooking(businessId: BusinessId, id: number, patch: Booking
       patch.partySize !== undefined ? Math.max(1, Math.min(patch.partySize, 100)) : current.partySize,
       status === "confirmed" ? (current.confirmedAt ?? now) : current.confirmedAt,
       status === "cancelled" ? (current.cancelledAt ?? now) : null,
-      // A moved booking needs a fresh reminder for its new time.
-      moved ? null : current.reminderSentAt,
+      // A booking at a new time needs a fresh reminder; the same time with a
+      // different service length does not (the customer was already reminded).
+      start !== current.start ? null : current.reminderSentAt,
       now, businessId, id,
     );
     return { ok: true, booking: getBooking(businessId, id)! };

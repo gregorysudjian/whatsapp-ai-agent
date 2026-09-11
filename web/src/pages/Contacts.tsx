@@ -203,7 +203,8 @@ function EraseDialog({ bid, contact, onClose, onErased }: { bid: string; contact
     setBusy(true);
     setError(false);
     try {
-      await api(`/api/b/${bid}/contacts/${contact.waId}/erase`, { method: "POST", body: { confirm: true } });
+      const r = await api<{ calendarEventsLeft: number }>(`/api/b/${bid}/contacts/${contact.waId}/erase`, { method: "POST", body: { confirm: true } });
+      if (r.calendarEventsLeft > 0) window.alert(t("contacts.eraseCalendarLeft", { n: r.calendarEventsLeft }));
       onErased();
     } catch {
       setError(true);

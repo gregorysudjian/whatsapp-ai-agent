@@ -356,6 +356,7 @@ export const fr: Record<Key, string> = {
   "contacts.eraseTitle": "Effacer {who} ?",
   "contacts.eraseBody": "Supprime tous les messages, rendez-vous et notes que l'entreprise détient sur cette personne, retire ses rendez-vous de Google Agenda et retire son numéro du journal d'activité. À utiliser quand quelqu'un demande à être oublié.",
   "contacts.eraseSure": "Je comprends que c'est définitif et irréversible.",
+  "contacts.eraseCalendarLeft": "Effacé. {n} événement(s) n'ont pas pu être retirés de Google Agenda (injoignable pour l'instant) : supprimez-les-y à la main.",
   "contacts.eraseConfirm": "Effacer définitivement",
   "overview.agentOn": "L'agent répond",
   "overview.agentOff": "L'agent est en pause",

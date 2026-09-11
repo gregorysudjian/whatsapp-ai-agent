@@ -356,6 +356,7 @@ export const en = {
   "contacts.eraseTitle": "Erase {who}?",
   "contacts.eraseBody": "Deletes every message, booking and note this business holds about this person, removes their bookings from Google Calendar, and removes their number from the activity log. Use it when someone asks to be forgotten.",
   "contacts.eraseSure": "I understand this is permanent and can't be undone.",
+  "contacts.eraseCalendarLeft": "Erased. {n} event(s) couldn't be removed from Google Calendar (it isn't reachable right now): delete them there by hand.",
   "contacts.eraseConfirm": "Erase for good",
   "overview.agentOn": "Agent is answering",
   "overview.agentOff": "Agent is paused",

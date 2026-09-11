@@ -17,7 +17,7 @@ import { log } from "../logger.ts";
 import { db, recordEvent, type BusinessId } from "../store/db.ts";
 import { getBusiness } from "../store/businesses.ts";
 import { canAccessBusiness, getUser } from "../store/users.ts";
-import { availableSlots, endOf, onBookingChange, setCalendarEventId, wallClockNow, type Booking, type SlotQuery } from "../store/bookings.ts";
+import { availableSlots, endOf, getBooking, onBookingChange, setCalendarEventId, wallClockNow, type Booking, type SlotQuery } from "../store/bookings.ts";
 import { getService } from "../store/services.ts";
 import { addDays, startOfDay } from "../store/overview.ts";
 import { decrypt, encrypt } from "../security/crypto.ts";
@@ -124,7 +124,15 @@ const insertStateStmt = db.prepare(`INSERT INTO oauth_states (nonce, business_id
 const takeStateStmt = db.prepare(`DELETE FROM oauth_states WHERE nonce = ? RETURNING business_id, user_id, expires_at`);
 const purgeStatesStmt = db.prepare(`DELETE FROM oauth_states WHERE expires_at < ?`);
 
-/** The Google consent URL for this business, with a fresh single-use state. */
+/** Hash of a state, as kept in the browser-binding cookie (never the state itself). */
+export const stateBinding = (state: string) => crypto.createHash("sha256").update(state).digest("base64url");
+
+/**
+ * The Google consent URL for this business, with a fresh single-use state.
+ * The caller also gives the browser a cookie holding the state's hash
+ * (stateBinding), which the callback requires: a consent link copied and sent
+ * to someone else is then useless, because their browser lacks the cookie.
+ */
 export function startConnect(bid: BusinessId, userId: number, now: number = Date.now()): string {
   if (!googleConfigured()) throw new CalendarError("not_configured");
   purgeStatesStmt.run(now);
@@ -166,8 +174,13 @@ async function tokenRequest(params: Record<string, string>): Promise<Record<stri
  * redirect back from accounts.google.com is a cross-site navigation, so the
  * browser does not send it. The state carries that binding instead.)
  */
-export async function finishConnect(code: string, state: string, now: number = Date.now()): Promise<{ businessId: BusinessId; userId: number }> {
+export async function finishConnect(code: string, state: string, binding: string | undefined, now: number = Date.now()): Promise<{ businessId: BusinessId; userId: number }> {
   if (!googleConfigured()) throw new CalendarError("not_configured");
+  // The same browser that clicked Connect: its cookie holds this state's hash.
+  const expected = typeof state === "string" ? stateBinding(state) : "";
+  if (!binding || binding.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(binding), Buffer.from(expected))) {
+    throw new CalendarError("wrong_browser");
+  }
   const row = typeof state === "string" && state.length <= 100
     ? takeStateStmt.get(state) as { business_id: number; user_id: number; expires_at: number } | undefined
     : undefined;
@@ -305,11 +318,45 @@ export async function syncBooking(bid: BusinessId, b: Booking): Promise<void> {
   }
 }
 
+/**
+ * Delete one event now and say whether it worked (gone already counts).
+ * For erasure, where the booking row no longer exists to retry from.
+ */
+export async function deleteEvent(bid: BusinessId, eventId: string): Promise<boolean> {
+  const c = getConnection(bid);
+  if (!c || c.status !== "connected" || !googleConfigured()) return false;
+  try {
+    const r = await gapi(bid, c, "DELETE", `/calendar/v3/calendars/${encodeURIComponent(c.calendarId)}/events/${encodeURIComponent(eventId)}`);
+    return r.status < 300 || r.status === 404 || r.status === 410;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is the owner busy in Google between start and start + duration? For
+ * bookings the agent makes: availability already hides busy times, but a
+ * model can still ask for a time it was never offered. Unreadable calendar:
+ * not a conflict (a Google outage must not stop bookings).
+ */
+export async function calendarConflict(bid: BusinessId, start: string, durationMin: number): Promise<boolean> {
+  try {
+    const end = endOf(start, durationMin) ?? `${start.slice(0, 10)}T24:00`;
+    const busy = await busyOn(bid, start.slice(0, 10));
+    return busy.some(([bs, be]) => bs < end && be > start);
+  } catch {
+    return false;
+  }
+}
+
 /** In-flight syncs, so tests (and shutdown) can wait for them. */
 const pending = new Set<Promise<void>>();
 export function calendarIdle(): Promise<void> {
   return Promise.all([...pending]).then(() => undefined);
 }
+
+/** The last sync queued for each booking: syncs of one booking run in order. */
+const chains = new Map<string, Promise<void>>();
 
 let started = false;
 /** Wire booking changes to the calendar. Called once at boot (and by tests). */
@@ -317,7 +364,20 @@ export function startCalendarSync(): void {
   if (started) return;
   started = true;
   onBookingChange((bid, booking) => {
-    const p = syncBooking(bid, booking).finally(() => pending.delete(p));
+    const key = `${bid}:${booking.id}`;
+    // After the previous sync of this booking, with the booking as it is THEN:
+    // a create still waiting on Google must have saved its event id before a
+    // cancel or a move looks for it, or the event is orphaned or duplicated.
+    const p = (chains.get(key) ?? Promise.resolve())
+      .then(() => {
+        const fresh = getBooking(bid, booking.id);
+        return fresh ? syncBooking(bid, fresh) : undefined;
+      })
+      .finally(() => {
+        pending.delete(p);
+        if (chains.get(key) === p) chains.delete(key);
+      });
+    chains.set(key, p);
     pending.add(p);
   });
 }
