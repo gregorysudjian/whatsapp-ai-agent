@@ -25,6 +25,7 @@ import { createService, deactivateService, listServices, updateService } from ".
 import { audit } from "../store/audit.ts";
 import { buildContextBlock, buildSystemPrompt } from "../agent/prompt.ts";
 import { body, handleError, query } from "./validate.ts";
+import { addDays, MAX_RANGE_DAYS, overview } from "../store/overview.ts";
 import {
   availableSlots, BOOKING_STATUSES, createBooking, listBookings, updateBooking, wallClockNow,
   type BookingFailure, type BookingPatch, type BookingStatus,
@@ -468,4 +469,24 @@ businessRouter.post("/bookings/:id/cancel", async (req: Request, res: Response) 
     }
   }
   res.json({ booking, notified, notifyError });
+});
+
+// --- overview -------------------------------------------------------------------
+
+const OverviewQuery = z.object({ from: ISO_DATE.optional(), to: ISO_DATE.optional() });
+
+businessRouter.get("/overview", (req: Request, res: Response) => {
+  const input = query(OverviewQuery, req, res);
+  if (!input) return;
+  const bid = businessOf(req);
+  // Days are the business's days: "today" is today where it is.
+  const today = wallClockNow(getBusiness(bid)!.timezone).slice(0, 10);
+  const to = input.to ?? today;
+  const from = input.from ?? addDays(to, -29);
+  const span = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+  if (Number.isNaN(span) || span < 1 || span > MAX_RANGE_DAYS) {
+    res.status(400).json({ error: "invalid_range" });
+    return;
+  }
+  res.json({ ...overview(bid, from, to), today, agentEnabled: agentEnabled(bid), business: profile(bid) });
 });

@@ -566,5 +566,11 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   minute against a template Meta rejects); the failure is an event with Meta's error.
 - **D7, button replies** are fixed sentences in en/fr/ar chosen by the template language,
   sent as `system` messages; a button for someone else's booking is ignored silently.
+- **D9, charts are hand-built SVG** (no chart library): two forms, a few hundred lines, full
+  control of the dataviz spec. Palette = categorical slots 1-2 (blue, orange), validated with
+  the dataviz checker against the real card surfaces (#ffffff light, #18181b dark), all PASS.
+- **D9, what counts:** reply time = from the first unanswered customer message to the next
+  reply by the agent or a person (automatic notices don't count), capped at 24h (beyond that it
+  is "unanswered"). "Bookings made" is by creation day; "appointments" by start day.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

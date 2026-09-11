@@ -34,7 +34,7 @@ Then delete that file.
 | D5 | Inbox with human takeover | ✅ done — live two-pane inbox, take over / reply / hand back, old token dashboard retired |
 | D6 | Bookings v2 and bookings page | ✅ done — services and durations, statuses, overlap rule, customers manage their own, week/list page |
 | D7 | Reminders and confirmations | ✅ done — template reminders with Confirm/Cancel buttons; off until you submit the template and switch it on |
-| D9 | Overview stats and charts | not started |
+| D9 | Overview stats and charts | ✅ done — six headline numbers with change vs the previous period, three charts, a daily table |
 | D10 | Contacts and CSV export | not started |
 | D12 | Admin panel | not started |
 | D11 | Monthly PDF report | not started |
@@ -158,6 +158,23 @@ WhatsApp only delivers them once Meta has approved your template.
 
 Also: **Pause agent** stops reminders too; moving a booking sends a new reminder for the new
 time; a booking made after its reminder time (e.g. booked last-minute) gets none.
+
+### D9 — Overview
+**Overview** (the first page after sign-in).
+1. The period row: **7 / 30 / 90 days** or **Custom** (two dates, then Show). Days are Beirut
+   days, whatever your computer's timezone.
+2. Six numbers: new conversations, messages received, the share of replies written by the
+   agent (vs your team), bookings made, conversations handed to a person, and the typical
+   (median) reply time with "90% within …". Arrows compare with the previous period of the
+   same length — green is better, red is worse (for reply time, faster is green).
+3. Charts: replies per day (agent vs team, stacked), bookings made per day, and reply time per
+   day. Hover a day (or focus a chart and use ← →) for the exact numbers.
+4. Appointments in the period by status, and how many customer messages went unanswered for 24h.
+5. **Daily numbers** at the bottom opens the same data as a table.
+6. **Pause agent** is still at the top right.
+
+It will look empty on your real data until customers write in — the screenshots were taken on
+a month of made-up demo traffic in a throwaway database.
 
 ---
 

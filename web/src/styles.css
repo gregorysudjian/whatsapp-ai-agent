@@ -32,3 +32,24 @@
 /* Hour lines in the bookings week grid. */
 :root { --grid-line: #f1f1f3; }
 .dark { --grid-line: #27272a; }
+
+/* Charts (Overview). Series slots are the validated categorical palette,
+   stepped separately for the dark surface - not an automatic flip. */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --chart-surface: #ffffff;
+  --chart-grid: #ececef;
+  --chart-axis: #d4d4d8;
+  --chart-muted: #71717a;
+  --chart-hover: rgba(24, 24, 27, 0.04);
+}
+.dark {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --chart-surface: #18181b;
+  --chart-grid: #27272a;
+  --chart-axis: #3f3f46;
+  --chart-muted: #a1a1aa;
+  --chart-hover: rgba(255, 255, 255, 0.05);
+}
