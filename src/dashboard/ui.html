@@ -49,6 +49,14 @@
     border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5;
   }
   header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  /* Which business this view belongs to. Once there are several clients,
+     an unlabelled page is an invitation to act on the wrong one. */
+  header h1 .biz {
+    font-weight: 600; color: var(--accent); margin-left: 6px;
+    padding: 1px 8px; border-radius: 10px; font-size: 13px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  header h1 .biz:empty { display: none; }
   .spacer { flex: 1 1 auto; }
   .meta {
     color: var(--muted); font-size: 12px; font-family: var(--mono);
@@ -194,7 +202,7 @@
 </head>
 <body>
 <header>
-  <h1>WhatsApp Agent</h1>
+  <h1>WhatsApp Agent <span id="bizName" class="biz"></span></h1>
   <span>
     <span class="dot" id="dot"></span>
     <span class="meta" id="conn" role="status" aria-live="polite">connecting...</span>
@@ -373,11 +381,13 @@ async function loadStats() {
     : "Resume automatic replies";
   $("disabledBanner").hidden = s.agentEnabled;
 
+  $("bizName").textContent = s.businessName || "";
   $("ident").textContent = "phone_id " + s.phoneNumberId + " . " + s.graphVersion;
   $("uptime").textContent = "up " + fmtUptime(s.uptimeSec);
 
   // Readable from a background tab: this is the queue someone must work.
-  document.title = (s.needsHuman ? "(" + s.needsHuman + ") " : "") + "WhatsApp Agent - Dashboard";
+  document.title = (s.needsHuman ? "(" + s.needsHuman + ") " : "") +
+    (s.businessName ? s.businessName + " - " : "") + "WhatsApp Agent";
 }
 
 // --- conversations --------------------------------------------------------
