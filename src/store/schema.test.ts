@@ -58,7 +58,9 @@ const all = (db: DatabaseSync, sql: string) => db.prepare(sql).all() as Record<s
 test("a legacy database upgrades with every row kept and assigned to business 1", () => {
   const { db, file } = legacyDatabase();
   try {
-    assert.deepEqual(migrate(db), [1, 2]);
+    // Every migration from 1 up, whatever the current version is - a literal
+    // list here goes stale with each new migration.
+    assert.deepEqual(migrate(db), Array.from({ length: SCHEMA_VERSION }, (_, i) => i + 1));
 
     for (const table of ["messages", "contacts", "settings", "events", "bookings"]) {
       const rows = all(db, `SELECT business_id FROM ${table}`);

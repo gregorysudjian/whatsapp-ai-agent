@@ -73,8 +73,13 @@ function guard(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-dashboardRouter.use("/dashboard", guard);
-dashboardRouter.use("/api", guard);
+// The legacy token guards ONLY the legacy paths. It used to cover all of
+// /api, which would have demanded the shared token from the new login routes
+// too. Retired entirely in D5.
+dashboardRouter.use(
+  ["/dashboard", "/api/stats", "/api/conversations", "/api/recent", "/api/events", "/api/agent", "/api/stream"],
+  guard,
+);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

@@ -238,6 +238,67 @@ const MIGRATIONS: Migration[] = [
       else db.exec(`ALTER TABLE orders RENAME TO orders_legacy`);
     }
   },
+
+  /**
+   * 3 - people who log in, their sessions, and an audit trail.
+   *
+   * A super admin sees every business, so has no business_id; an owner has
+   * exactly one. The CHECK makes any other pairing impossible rather than
+   * merely unlikely - an owner row with no business would otherwise be read
+   * as "unrestricted" by any code that forgot to look at the role.
+   *
+   * Sessions store only a SHA-256 of the token. The token itself lives in the
+   * browser cookie, so a copy of the database yields no usable sessions.
+   *
+   * The audit log is append-only by convention and deliberately separate
+   * from `events` (which is operational noise): it answers "who saw or
+   * changed what, when" - the question a Law 25 confidentiality incident
+   * register has to be able to answer.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE users (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        email                TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        password_hash        TEXT NOT NULL,
+        role                 TEXT NOT NULL CHECK (role IN ('super_admin','owner')),
+        business_id          INTEGER REFERENCES businesses(id),
+        name                 TEXT,
+        locale               TEXT NOT NULL DEFAULT 'en' CHECK (locale IN ('en','fr')),
+        active               INTEGER NOT NULL DEFAULT 1,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        created_at           INTEGER NOT NULL,
+        last_login_at        INTEGER,
+        CHECK ((role = 'super_admin' AND business_id IS NULL) OR
+               (role = 'owner'       AND business_id IS NOT NULL))
+      );
+      CREATE INDEX users_by_business ON users (business_id);
+
+      CREATE TABLE sessions (
+        token_hash   TEXT PRIMARY KEY,
+        user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at   INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        expires_at   INTEGER NOT NULL,
+        ip           TEXT,
+        user_agent   TEXT
+      );
+      CREATE INDEX sessions_by_user ON sessions (user_id);
+
+      CREATE TABLE audit_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts          INTEGER NOT NULL,
+        user_id     INTEGER REFERENCES users(id),
+        business_id INTEGER REFERENCES businesses(id),
+        action      TEXT NOT NULL,
+        target      TEXT,
+        detail      TEXT,
+        ip          TEXT
+      );
+      CREATE INDEX audit_by_business ON audit_log (business_id, ts DESC);
+      CREATE INDEX audit_by_user     ON audit_log (user_id, ts DESC);
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

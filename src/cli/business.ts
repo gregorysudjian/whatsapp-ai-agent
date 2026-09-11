@@ -12,8 +12,7 @@
  * your shell history in plain text, which defeats encrypting it at rest.
  */
 
-import readline from "node:readline";
-import { stdin, stdout } from "node:process";
+import { prompter } from "./prompt.ts";
 import {
   createBusiness, credentialSummary, getBusiness, getFacts, getSchedule, listBusinesses,
   seedDefaultBusiness, setBusinessStatus, setWhatsappCredentials, ValidationError,
@@ -26,27 +25,6 @@ const [command, ...rest] = process.argv.slice(2);
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
   return i === -1 ? undefined : rest[i + 1];
-}
-
-/**
- * Line-buffered prompts. readline's question() drops lines that arrive before
- * it is called - with piped input they all arrive at once, so the answers
- * vanished and the process exited cleanly having saved nothing. Iterating the
- * line stream buffers them instead, and running out is a loud error.
- */
-function prompter() {
-  const rl = readline.createInterface({ input: stdin, terminal: stdin.isTTY ?? false });
-  const lines = rl[Symbol.asyncIterator]();
-  return {
-    async ask(question: string): Promise<string> {
-      stdout.write(question);
-      const next = await lines.next();
-      if (next.done) throw new Error(`Input ended before "${question.trim()}" was answered.`);
-      if (!stdin.isTTY) stdout.write("\n");
-      return String(next.value).trim();
-    },
-    close: () => rl.close(),
-  };
 }
 
 function idArg(): number {

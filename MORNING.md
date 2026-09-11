@@ -18,7 +18,7 @@ git history (`git show b08ac69:MORNING.md`).
 
 | Step | What | State |
 |---|---|---|
-| D2 | Login and roles | not started |
+| D2 | Login and roles | ✅ done — accounts, sessions, audit log, route-table authorization test |
 | D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | not started |
 | D4 | Agent settings → system prompt | not started |
 | D5 | Inbox with human takeover | not started |
@@ -36,7 +36,26 @@ git history (`git show b08ac69:MORNING.md`).
 
 ## 3. How to test each finished step
 
-*(One section per finished step.)*
+### D2 — Login and roles
+Two accounts exist in your real database; their one-time passwords are in
+`data/initial-credentials.txt` (never committed, never printed in logs):
+- **admin@example.com** — super admin, sees every business.
+- **owner@ninjaco.test** — owner of Ninja Co only.
+
+Both must change their password at first login. Until then they can see
+nothing but the change-password screen.
+
+1. `npm run user -- list` → both accounts, `mustChangePassword: yes`, `lastLogin: never`.
+2. Logging in happens on the new dashboard (D3, below).
+3. To manage accounts later: `npm run user -- create-owner <email> --business <id>`,
+   `reset-password <email>`, `deactivate <email>`.
+
+What protects it: passwords hashed with scrypt; sessions stored only as hashes; a
+session ends after 12 idle hours or 7 days; 5 wrong passwords lock that email for 15
+minutes; the same error for "wrong password" and "no such account"; a password change
+logs out every other device. `src/auth/authz.test.ts` walks every dashboard route and
+proves an owner of one business gets "not found" for another's — it was checked by
+deliberately breaking the guard four different ways.
 
 ---
 
