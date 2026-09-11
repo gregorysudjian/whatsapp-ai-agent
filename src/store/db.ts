@@ -73,28 +73,74 @@ export function setAgentEnabled(businessId: BusinessId, enabled: boolean): void 
 
 // --- handoff --------------------------------------------------------------
 
-const pauseStmt = db.prepare(`
-  UPDATE contacts SET paused = ?, needs_human = ?, handoff_reason = ?
+/*
+ * Who has a conversation: 'ai' (the agent answers) or 'human' (a person does,
+ * and the agent stays silent). needs_human means the agent asked for a person
+ * and nobody has picked it up yet - it is the inbox's to-do list.
+ */
+const controlStmt = db.prepare(
+  `SELECT control FROM contacts WHERE business_id = ? AND wa_id = ?`,
+);
+const escalateStmt = db.prepare(`
+  UPDATE contacts SET control = 'human', needs_human = 1, handoff_reason = ?, taken_over_by = NULL, taken_over_at = NULL
   WHERE business_id = ? AND wa_id = ?
 `);
-const pausedStmt = db.prepare(
-  `SELECT paused FROM contacts WHERE business_id = ? AND wa_id = ?`,
-);
+const takeOverStmt = db.prepare(`
+  UPDATE contacts SET control = 'human', needs_human = 0, taken_over_by = ?, taken_over_at = ?
+  WHERE business_id = ? AND wa_id = ?
+`);
+const handBackStmt = db.prepare(`
+  UPDATE contacts SET control = 'ai', needs_human = 0, handoff_reason = NULL, taken_over_by = NULL, taken_over_at = NULL
+  WHERE business_id = ? AND wa_id = ?
+`);
 
+/** True while a person has this conversation; the webhook then skips the AI. */
 export function isPaused(businessId: BusinessId, waId: string): boolean {
-  const row = pausedStmt.get(businessId, waId) as Record<string, unknown> | undefined;
-  return Number(row?.["paused"] ?? 0) === 1;
+  const row = controlStmt.get(businessId, waId) as Record<string, unknown> | undefined;
+  return row?.["control"] === "human";
 }
 
-/** Hand a conversation to a person: agent stops replying there until cleared. */
+export function contactExists(businessId: BusinessId, waId: string): boolean {
+  return controlStmt.get(businessId, waId) !== undefined;
+}
+
+/** The agent asks for a person: it goes silent, and the chat joins the to-do list. */
 export function pauseForHuman(businessId: BusinessId, waId: string, reason: string): void {
-  pauseStmt.run(1, 1, reason, businessId, waId);
+  escalateStmt.run(reason, businessId, waId);
   recordEvent(businessId, "warn", "handoff_requested", { waId, reason });
 }
 
+/** A person takes the conversation from the dashboard. False if it does not exist here. */
+export function takeOver(businessId: BusinessId, waId: string, userId: number): boolean {
+  const changed = Number(takeOverStmt.run(userId, Date.now(), businessId, waId).changes) === 1;
+  if (changed) recordEvent(businessId, "info", "taken_over", { waId, userId });
+  return changed;
+}
+
+/** Back to the agent. False if the conversation does not exist here. */
+export function handBack(businessId: BusinessId, waId: string): boolean {
+  const changed = Number(handBackStmt.run(businessId, waId).changes) === 1;
+  if (changed) recordEvent(businessId, "info", "handed_back", { waId });
+  return changed;
+}
+
+const tookOverSinceStmt = db.prepare(`
+  SELECT 1 AS hit FROM contacts
+  WHERE business_id = ? AND wa_id = ? AND control = 'human' AND taken_over_by IS NOT NULL AND taken_over_at >= ?
+`);
+
+/**
+ * Did a person take this conversation over at or after `since`? The handler
+ * asks just before sending: a reply the model was still writing when someone
+ * clicked "Take over" must not land on top of theirs.
+ */
+export function humanTookOverSince(businessId: BusinessId, waId: string, since: number): boolean {
+  return tookOverSinceStmt.get(businessId, waId, since) !== undefined;
+}
+
+/** Kept for existing callers: clearing a handoff is handing back. */
 export function clearHandoff(businessId: BusinessId, waId: string): void {
-  pauseStmt.run(0, 0, null, businessId, waId);
-  recordEvent(businessId, "info", "handoff_cleared", { waId });
+  handBack(businessId, waId);
 }
 
 // --- messages -------------------------------------------------------------
@@ -105,8 +151,8 @@ export const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Every column bound explicitly: an inline NULL in the VALUES list shifts the
 // positional parameters after it, which silently files data in the wrong column.
 const insertMessage = db.prepare(`
-  INSERT INTO messages (id, business_id, wa_id, direction, type, text, sender_name, ts, status, error, raw)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO messages (id, business_id, wa_id, direction, type, text, sender_name, ts, status, error, raw, sender, sent_by_user_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO NOTHING
 `);
 
@@ -125,7 +171,7 @@ export function recordInbound(businessId: BusinessId, msg: InboundMessage): void
   const ts = msg.timestamp.getTime();
   insertMessage.run(
     msg.id, businessId, msg.from, "in", msg.raw.type, msg.text,
-    msg.senderName ?? null, ts, null, null, JSON.stringify(msg.raw),
+    msg.senderName ?? null, ts, null, null, JSON.stringify(msg.raw), "customer", null,
   );
   touchContact.run(businessId, msg.from, msg.senderName ?? null, ts, ts, ts, 1, 0);
   publish({ businessId, kind: "message", direction: "in", waId: msg.from, id: msg.id });
@@ -135,9 +181,18 @@ export function recordInbound(businessId: BusinessId, msg: InboundMessage): void
  * `id` is the wamid Graph returns on send - without it, delivery receipts
  * arriving later have no row to attach to.
  */
-export function recordOutbound(businessId: BusinessId, id: string, waId: string, text: string): void {
+export type OutboundSender = "ai" | "human" | "system";
+
+export function recordOutbound(
+  businessId: BusinessId,
+  id: string,
+  waId: string,
+  text: string,
+  sender: OutboundSender = "ai",
+  userId: number | null = null,
+): void {
   const ts = Date.now();
-  insertMessage.run(id, businessId, waId, "out", "text", text, null, ts, null, null, null);
+  insertMessage.run(id, businessId, waId, "out", "text", text, null, ts, null, null, null, sender, userId);
   touchContact.run(businessId, waId, null, ts, null, ts, 0, 1);
   publish({ businessId, kind: "message", direction: "out", waId, id });
 }

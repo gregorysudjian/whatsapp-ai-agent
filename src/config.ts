@@ -3,7 +3,6 @@
  * a missing token should not look like "the bot just doesn't reply".
  */
 
-import crypto from "node:crypto";
 import { parseKey } from "./security/crypto.ts";
 
 /**
@@ -47,17 +46,6 @@ export const config = {
   port: Number(optional("PORT", "3000")),
   logLevel: optional("LOG_LEVEL", "info"),
   dbPath: optional("DB_PATH", "./data/agent.db"),
-
-  dashboard: {
-    /**
-     * Never unauthenticated. A loopback-only check would be worthless here:
-     * cloudflared runs on this machine, so tunnelled requests also arrive from
-     * 127.0.0.1 - an "is local" guard would admit the whole internet. When no
-     * token is configured we mint one per boot and log it.
-     */
-    token: optional("DASHBOARD_TOKEN", crypto.randomBytes(16).toString("hex")),
-    tokenWasGenerated: !process.env["DASHBOARD_TOKEN"]?.trim(),
-  },
 
   anthropic: {
     model: optional("ANTHROPIC_MODEL", "claude-opus-5"),

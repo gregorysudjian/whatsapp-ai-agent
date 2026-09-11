@@ -365,6 +365,34 @@ const MIGRATIONS: Migration[] = [
       update.run(JSON.stringify(v2), r.business_id);
     }
   },
+
+  /**
+   * 5 - who said what, and who is in control.
+   *
+   * messages.sender distinguishes the customer, the AI, a person on the
+   * dashboard, and automated system notices - "AI-handled messages" cannot be
+   * counted, nor a thread labelled, without it. Existing rows backfill from
+   * direction: every outbound message so far came from the agent.
+   *
+   * contacts.control replaces the old `paused` flag with a named state: 'ai'
+   * (the agent answers) or 'human' (a person has the conversation; the agent
+   * stays silent). taken_over_by records which person, for the audit trail
+   * and so the inbox can say "Sam has this".
+   */
+  (db) => {
+    addColumns(db, "messages", {
+      sender: "TEXT CHECK (sender IN ('customer','ai','human','system'))",
+      sent_by_user_id: "INTEGER REFERENCES users(id)",
+    });
+    db.exec(`UPDATE messages SET sender = CASE direction WHEN 'in' THEN 'customer' ELSE 'ai' END WHERE sender IS NULL`);
+
+    addColumns(db, "contacts", {
+      control: "TEXT NOT NULL DEFAULT 'ai' CHECK (control IN ('ai','human'))",
+      taken_over_by: "INTEGER REFERENCES users(id)",
+      taken_over_at: "INTEGER",
+    });
+    db.exec(`UPDATE contacts SET control = CASE WHEN paused = 1 THEN 'human' ELSE 'ai' END`);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

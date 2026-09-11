@@ -36,8 +36,8 @@ if (!outDir) {
 
 seedDefaultBusiness();
 const other = createBusiness({ name: "Clinique Beauséjour", defaultLanguage: "fr" });
-seedDemoData(DEFAULT_BUSINESS_ID);
 const owner = await makeUser("owner", DEFAULT_BUSINESS_ID);
+seedDemoData(DEFAULT_BUSINESS_ID, owner.user.id);
 const admin = await makeUser("super_admin");
 const newcomer = await makeUser("owner", DEFAULT_BUSINESS_ID, { mustChangePassword: true });
 

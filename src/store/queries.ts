@@ -19,36 +19,64 @@ export interface ConversationRow {
   outboundCount: number;
   lastText: string;
   lastDirection: "in" | "out" | null;
+  lastSender: "customer" | "ai" | "human" | "system" | null;
   /** ms left in Meta's free-form window; 0 once it has closed. */
   windowRemainingMs: number;
   needsHuman: boolean;
+  /** Kept for older callers; true exactly when control is "human". */
   paused: boolean;
   handoffReason: string | null;
+  control: "ai" | "human";
+  /** Email of whoever took the conversation over, if a person has it. */
+  takenOverBy: string | null;
+  takenOverAt: number | null;
+  /** The customer spoke last: someone (the agent or a person) owes them a reply. */
+  awaitingReply: boolean;
 }
+
+export type ConversationFilter = "all" | "needs_human" | "human" | "ai";
 
 const conversationsStmt = db.prepare(`
   SELECT
     c.wa_id, c.name, c.last_inbound_ts, c.last_message_ts,
     c.inbound_count, c.outbound_count,
-    c.needs_human, c.paused, c.handoff_reason,
+    c.needs_human, c.control, c.handoff_reason, c.taken_over_at,
+    u.email     AS taken_over_email,
     m.text      AS last_text,
-    m.direction AS last_direction
+    m.direction AS last_direction,
+    m.sender    AS last_sender
   FROM contacts c
+  LEFT JOIN users u ON u.id = c.taken_over_by
   LEFT JOIN messages m ON m.id = (
     SELECT id FROM messages
     WHERE business_id = c.business_id AND wa_id = c.wa_id
     ORDER BY rowid DESC LIMIT 1
   )
-  WHERE c.business_id = ?
+  WHERE c.business_id = ?1
+    AND (?2 = 'all'
+      OR (?2 = 'needs_human' AND c.needs_human = 1)
+      OR (?2 = 'human' AND c.control = 'human')
+      OR (?2 = 'ai' AND c.control = 'ai'))
+    AND (?3 = '' OR c.name LIKE ?4 ESCAPE '!' OR c.wa_id LIKE ?4 ESCAPE '!')
   -- Conversations waiting on a person float to the top: that is the queue
   -- someone actually has to work through.
   ORDER BY c.needs_human DESC, COALESCE(c.last_message_ts, 0) DESC
-  LIMIT ?
+  LIMIT ?5
 `);
 
-export function listConversations(businessId: BusinessId, limit = 100): ConversationRow[] {
+/** A LIKE pattern matching `q` literally: "50%" finds the characters, not a wildcard. */
+export function likeContains(q: string): string {
+  return `%${q.replace(/[!%_]/g, (c) => `!${c}`)}%`;
+}
+
+export function listConversations(
+  businessId: BusinessId,
+  limit = 100,
+  opts: { filter?: ConversationFilter; q?: string } = {},
+): ConversationRow[] {
   const now = Date.now();
-  return conversationsStmt.all(businessId, limit).map((r) => {
+  const q = (opts.q ?? "").trim().slice(0, 100);
+  return conversationsStmt.all(businessId, opts.filter ?? "all", q, likeContains(q), limit).map((r) => {
     const lastInbound = num(r["last_inbound_ts"]);
     return {
       waId: String(r["wa_id"]),
@@ -59,11 +87,16 @@ export function listConversations(businessId: BusinessId, limit = 100): Conversa
       outboundCount: num(r["outbound_count"]) ?? 0,
       lastText: str(r["last_text"]) ?? "",
       lastDirection: (str(r["last_direction"]) as "in" | "out" | null) ?? null,
+      lastSender: r["last_sender"] == null ? null : senderOf({ sender: r["last_sender"], direction: r["last_direction"] }),
       windowRemainingMs:
         lastInbound === null ? 0 : Math.max(0, lastInbound + WINDOW_MS - now),
       needsHuman: Number(r["needs_human"] ?? 0) === 1,
-      paused: Number(r["paused"] ?? 0) === 1,
+      paused: r["control"] === "human",
       handoffReason: str(r["handoff_reason"]),
+      control: r["control"] === "human" ? "human" : "ai",
+      takenOverBy: str(r["taken_over_email"]),
+      takenOverAt: num(r["taken_over_at"]),
+      awaitingReply: str(r["last_direction"]) === "in",
     };
   });
 }
@@ -82,7 +115,16 @@ export interface MessageRow {
   outputTokens: number | null;
   cacheReadTokens: number | null;
   latencyMs: number | null;
+  /** Who wrote it: the customer, the agent, a person on the dashboard, or the system. */
+  sender: "customer" | "ai" | "human" | "system";
+  /** Email of the dashboard user, for sender "human". */
+  sentBy: string | null;
 }
+
+const MESSAGE_COLUMNS = `
+  m.id, m.wa_id, m.direction, m.type, m.text, m.sender_name, m.ts, m.status, m.error,
+  m.input_tokens, m.output_tokens, m.cache_read_tokens, m.latency_ms,
+  m.sender, u.email AS sent_by_email`;
 
 /**
  * Ordered by rowid (insertion order), never by ts.
@@ -93,10 +135,14 @@ export interface MessageRow {
  * stored, and sorting on it interleaves the transcript wrongly. Insertion
  * order is what the agent actually observed, which is what history must be.
  */
+// The latest `limit` messages, returned oldest first: a long thread shows its
+// recent end, which is the part anyone replying needs.
 const messagesStmt = db.prepare(`
-  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
-         input_tokens, output_tokens, cache_read_tokens, latency_ms
-  FROM messages WHERE business_id = ? AND wa_id = ? ORDER BY rowid ASC LIMIT ?
+  SELECT * FROM (
+    SELECT ${MESSAGE_COLUMNS}, m.rowid AS seq
+    FROM messages m LEFT JOIN users u ON u.id = m.sent_by_user_id
+    WHERE m.business_id = ? AND m.wa_id = ? ORDER BY m.rowid DESC LIMIT ?
+  ) ORDER BY seq ASC
 `);
 
 export function listMessages(businessId: BusinessId, waId: string, limit = 500): MessageRow[] {
@@ -104,9 +150,9 @@ export function listMessages(businessId: BusinessId, waId: string, limit = 500):
 }
 
 const recentStmt = db.prepare(`
-  SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
-         input_tokens, output_tokens, cache_read_tokens, latency_ms
-  FROM messages WHERE business_id = ? ORDER BY rowid DESC LIMIT ?
+  SELECT ${MESSAGE_COLUMNS}
+  FROM messages m LEFT JOIN users u ON u.id = m.sent_by_user_id
+  WHERE m.business_id = ? ORDER BY m.rowid DESC LIMIT ?
 `);
 
 export function listRecentMessages(businessId: BusinessId, limit = 50): MessageRow[] {
@@ -128,7 +174,15 @@ function toMessage(r: Record<string, unknown>): MessageRow {
     outputTokens: num(r["output_tokens"]),
     cacheReadTokens: num(r["cache_read_tokens"]),
     latencyMs: num(r["latency_ms"]),
+    sender: senderOf(r),
+    sentBy: str(r["sent_by_email"]),
   };
+}
+
+function senderOf(r: Record<string, unknown>): MessageRow["sender"] {
+  const s = str(r["sender"]);
+  if (s === "customer" || s === "ai" || s === "human" || s === "system") return s;
+  return str(r["direction"]) === "out" ? "ai" : "customer";
 }
 
 export interface EventRow {

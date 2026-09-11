@@ -197,7 +197,11 @@ export function AppLayout() {
           </div>
         </header>
 
-        <main className="flex-1 px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:pb-10">
+        {/* The inbox is a two-pane app of its own and fills the screen; every
+            other page is a padded document. */}
+        <main className={/^\/b\/\d+\/inbox(\/|$)/.test(location.pathname)
+          ? "flex-1 pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:p-6"
+          : "flex-1 px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:pb-10"}>
           <Outlet />
         </main>
 

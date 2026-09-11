@@ -40,8 +40,12 @@ export function createSession(userId: number, ip?: string | null, userAgent?: st
   return token;
 }
 
-/** The user behind a token, or undefined if it is unknown, expired or disabled. */
-export function resolveSession(token: string | undefined, now = Date.now()): User | undefined {
+/**
+ * The user behind a token, or undefined if it is unknown, expired or disabled.
+ * `touch: false` checks without counting as activity - a live stream left open
+ * in a forgotten tab must not keep its session awake forever.
+ */
+export function resolveSession(token: string | undefined, now = Date.now(), touch = true): User | undefined {
   if (!token || token.length > 100) return undefined;
   const key = hash(token);
   const row = getStmt.get(key) as Record<string, unknown> | undefined;
@@ -59,7 +63,7 @@ export function resolveSession(token: string | undefined, now = Date.now()): Use
     return undefined;
   }
 
-  if (now - lastSeen > TOUCH_EVERY_MS) touchStmt.run(now, key);
+  if (touch && now - lastSeen > TOUCH_EVERY_MS) touchStmt.run(now, key);
   return user;
 }
 

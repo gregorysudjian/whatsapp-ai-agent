@@ -465,7 +465,14 @@ separately, a Meta webhook per client). No actual deployment.
 - **CSS:** a class with `display:` beats the `[hidden]` attribute (the old UI keeps
   `[hidden]{display:none!important}`); inline styles beat media queries.
 - **Processes:** `TaskStop` on `npm run dev` leaves the `tsx watch` parent alive, and it will
-  restart and **migrate the live DB** on the next file save. Kill it.
+  restart and **migrate the live DB** on the next file save. Kill it. The same goes for a timed-out
+  `npm test`: the `node --test` runner survives `TaskStop`; find it by command line and kill it.
+- **Mutation checks: restore from a copy, never `git checkout <file>`.** That also reverts the
+  step's uncommitted work in the file (it wiped D5's `db.ts` changes once; they were
+  recovered from the transcript). `cp file /tmp/x.bak`, mutate, `cp` back.
+- **Route-walking tests and streams:** `testing/auth.ts` `call()` returns right after the
+  headers of a `text/event-stream` response. Any new never-ending route must do the same, or
+  `authz.test.ts` hangs.
 - **Anthropic SDK 0.124:** error classes are statics on the default export; `APIError` (not
   `APIStatusError`); `APIConnectionError` extends `APIError`, so check it first. With no
   credential the SDK throws a plain `Error`.
@@ -528,3 +535,16 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D4, the clock:** the agent had no idea of the current date, so relative dates ("tomorrow")
   could not be resolved. Added a second system block with the business-local date and time,
   placed after the cache breakpoint so the cached prefix stays byte-stable.
+- **D5, in-flight replies:** a reply the model is still writing when a person takes over is
+  dropped (`humanTookOverSince`), and so is one written while the owner hits the kill switch.
+  The agent's *own* hand-off message still goes out: only a takeover by a person (a
+  `taken_over_by` user) cancels it. *Reverse:* remove the check in `handler.ts`.
+- **D5, replying takes over:** a manual reply to a conversation the agent has first takes it
+  over, or the agent would answer the customer's next message on top of the person.
+- **D5, the kill switch moved** from the retired token dashboard to `PUT /api/b/:bid/agent`
+  (a Pause/Resume button on Overview, with a confirmation), audited.
+- **D5, the stream re-checks the session** on every 25-second heartbeat without counting as
+  activity: logging out or losing access closes it, and an open tab doesn't keep a session
+  alive past its 12-hour idle limit.
+- **D5, audit holds no message text:** a manual reply is logged with its length only; the text
+  already lives in the conversation, and a copy would double what an erasure request must reach.

@@ -7,7 +7,6 @@
 import express, { type Request } from "express";
 import { log } from "./logger.ts";
 import { webhookRouter } from "./whatsapp/webhook.ts";
-import { dashboardRouter } from "./dashboard/router.ts";
 import {
   originCheck, requireAuth, requireBusinessAccess, requireSuperAdmin, securityHeaders, session,
 } from "./auth/middleware.ts";
@@ -50,9 +49,8 @@ export function createApp(): express.Express {
   app.use("/api/b/:bid", requireAuth, requireBusinessAccess, businessRouter);
   app.use("/api/admin", requireAuth, requireSuperAdmin, adminRouter);
 
-  app.use(dashboardRouter);
-  // After every real /api route (the legacy dashboard's included): an unknown
-  // /api path is a JSON 404, not the app's HTML shell.
+  // After every real /api route: an unknown /api path is a JSON 404, not the
+  // app's HTML shell.
   app.use("/api", (_req, res) => { res.status(404).json({ error: "not_found" }); });
   // Last: the built dashboard, and its client-side routes.
   app.use(webApp());

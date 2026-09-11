@@ -1,7 +1,7 @@
 import { sendText, markReadAndTyping } from "../whatsapp/client.ts";
 import { generateReply } from "../agent/claude.ts";
 import { log } from "../logger.ts";
-import { agentEnabled, isPaused, recordEvent, recordUsage, type BusinessId } from "../store/db.ts";
+import { agentEnabled, humanTookOverSince, isPaused, recordEvent, recordUsage, type BusinessId } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
 
 /**
@@ -44,11 +44,23 @@ export async function handleMessage(businessId: BusinessId, msg: InboundMessage)
       businessId,
       msg.from,
       `I can only read text right now - I got a "${msg.raw.type}" message. Media support is coming.`,
+      { sender: "system" },
     );
     return;
   }
 
+  const started = Date.now();
   const reply = await generateReply(businessId, msg.from, msg.senderName);
+
+  // The model takes seconds; the world moves meanwhile. A person who took the
+  // conversation over, or an owner who hit the kill switch, wins over a reply
+  // that was already being written. (The agent handing off by itself is
+  // different: its "a colleague will follow up" message should still go.)
+  if (humanTookOverSince(businessId, msg.from, started) || !agentEnabled(businessId)) {
+    log.info("reply_dropped", { businessId, from: msg.from, reason: "control_changed" });
+    recordEvent(businessId, "info", "reply_dropped", { from: msg.from, reason: "control_changed" });
+    return;
+  }
 
   if (!reply.ok) {
     recordEvent(businessId, "warn", "fallback_reply_sent", { to: msg.from, id: msg.id });

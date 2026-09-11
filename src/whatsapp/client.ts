@@ -1,6 +1,6 @@
 import { graphBaseFor } from "../config.ts";
 import { log } from "../logger.ts";
-import { recordEvent, recordOutbound, windowState, type BusinessId } from "../store/db.ts";
+import { recordEvent, recordOutbound, windowState, type BusinessId, type OutboundSender } from "../store/db.ts";
 import { getWhatsappCredentials, type WhatsappCredentials } from "../store/businesses.ts";
 import { outboundLimiter } from "../core/throttle.ts";
 
@@ -119,10 +119,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Returns the wamids Graph assigned, so the caller can attach model usage to
  * the reply it paid for.
  */
+export interface SendOptions {
+  /** Who is speaking: the agent (default), a person on the dashboard, or an automated notice. */
+  sender?: OutboundSender;
+  /** The dashboard user, when sender is "human" - kept for the audit trail and the thread label. */
+  userId?: number | null;
+}
+
 export async function sendText(
   businessId: BusinessId,
   to: string,
   body: string,
+  opts: SendOptions = {},
 ): Promise<string[]> {
   const wamids: string[] = [];
 
@@ -156,7 +164,7 @@ export async function sendText(
     // attach to and the dashboard shows a send that never resolves.
     const wamid = result.messages?.[0]?.id;
     if (wamid) {
-      recordOutbound(businessId, wamid, to, chunk);
+      recordOutbound(businessId, wamid, to, chunk, opts.sender ?? "ai", opts.userId ?? null);
       wamids.push(wamid);
     } else {
       log.warn("send_missing_wamid", { businessId, to });

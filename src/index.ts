@@ -40,13 +40,7 @@ app.listen(config.port, () => {
     });
   }
 
-  const url = `http://localhost:${config.port}/dashboard?token=${config.dashboard.token}`;
-  log.info("dashboard_ready", { url });
-  if (config.dashboard.tokenWasGenerated) {
-    log.warn("dashboard_token_generated", {
-      hint: "Set DASHBOARD_TOKEN in .env to keep one URL across restarts.",
-    });
-  }
+  log.info("dashboard_ready", { url: `http://localhost:${config.port}/` });
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

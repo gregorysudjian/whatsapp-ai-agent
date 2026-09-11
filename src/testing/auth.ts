@@ -65,11 +65,19 @@ export async function call(
   const origin = opts.origin === undefined && method !== "GET" ? baseUrl : opts.origin;
   if (origin) headers["origin"] = origin;
 
+  const controller = new AbortController();
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
+    signal: controller.signal,
     ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
   });
+  // A live stream never ends: its status and headers are the answer, and
+  // reading the body would hang the test.
+  if (res.headers.get("content-type")?.startsWith("text/event-stream")) {
+    controller.abort();
+    return { status: res.status, json: { stream: true }, headers: res.headers };
+  }
   const text = await res.text();
   let json: Record<string, unknown> = {};
   try {

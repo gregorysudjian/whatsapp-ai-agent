@@ -175,7 +175,8 @@ test("migration 4 turns old facts into v2 settings, placeholders into blanks", (
       neverDo: ["promise a refund", "claim an order has shipped"],
     }));
 
-    assert.deepEqual(migrate(db), [4]);
+    // Migration 4 runs (and any later ones after it) - not a literal list.
+    assert.equal(migrate(db)[0], 4);
     const v2 = JSON.parse((db.prepare(`SELECT facts FROM business_settings WHERE business_id = 1`).get() as { facts: string }).facts);
 
     assert.equal(v2.about, "Robotics and coding tutoring");

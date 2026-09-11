@@ -24,6 +24,20 @@ export function Overview() {
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [toggling, setToggling] = useState(false);
+  const setAgent = async (enabled: boolean) => {
+    if (!enabled && !window.confirm(t("overview.pauseConfirm"))) return;
+    setToggling(true);
+    try {
+      const r = await api<{ agentEnabled: boolean }>(`/api/b/${bid}/agent`, { method: "PUT", body: { enabled } });
+      setData((d) => d && { ...d, stats: { ...d.stats, agentEnabled: r.agentEnabled } });
+    } catch {
+      setError(t("common.error"));
+    } finally {
+      setToggling(false);
+    }
+  };
+
   const load = () => {
     setError(null);
     api<Summary>(`/api/b/${bid}/summary`)
@@ -49,9 +63,17 @@ export function Overview() {
       <PageHeader
         title={t("overview.title")}
         subtitle={t("overview.subtitle")}
-        actions={data.stats.agentEnabled
-          ? <Badge tone="green">● {t("overview.agentOn")}</Badge>
-          : <Badge tone="amber">● {t("overview.agentOff")}</Badge>}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {data.stats.agentEnabled
+              ? <Badge tone="green">● {t("overview.agentOn")}</Badge>
+              : <Badge tone="amber">● {t("overview.agentOff")}</Badge>}
+            <Button size="sm" variant={data.stats.agentEnabled ? "secondary" : "primary"} loading={toggling}
+              onClick={() => void setAgent(!data.stats.agentEnabled)}>
+              {data.stats.agentEnabled ? t("overview.pauseAgent") : t("overview.resumeAgent")}
+            </Button>
+          </div>
+        }
       />
       {!data.business.connected && (
         <div className="mb-6"><Alert tone="amber"><span className="inline-flex items-center gap-2"><AlertCircle className="size-4" aria-hidden />{t("shell.notConnected")}</span></Alert></div>

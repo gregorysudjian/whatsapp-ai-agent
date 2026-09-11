@@ -31,7 +31,7 @@ Then delete that file.
 | D2 | Login and roles | ✅ done — accounts, sessions, audit log, route-table authorization test |
 | D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | ✅ done — sign-in, forced password change, layout, overview tiles |
 | D4 | Agent settings → system prompt | ✅ done — 8-tab settings page, services with prices, live prompt preview |
-| D5 | Inbox with human takeover | not started |
+| D5 | Inbox with human takeover | ✅ done — live two-pane inbox, take over / reply / hand back, old token dashboard retired |
 | D6 | Bookings v2 and bookings page | not started |
 | D7 | Reminders and confirmations | not started |
 | D9 | Overview stats and charts | not started |
@@ -97,6 +97,30 @@ The agent now also knows today's date and time in Beirut, so "tomorrow at 10" wo
 had no way to know what day it was before. Everything is translated; a test fails if
 any French string is missing, blank, or just the English pasted in.
 
+### D5 — Inbox and human takeover
+**Inbox** in the sidebar (on a phone, the bottom bar's **Messages**).
+1. The list: search by name or number, filter chips (All / Needs a person / With a person / With
+   the agent). Chats where the agent asked for a person are on top with an amber badge; a
+   green dot means the customer spoke last.
+2. Open a chat: WhatsApp-style bubbles (Arabic reads right to left), day separators, delivery
+   ticks, and who wrote each outgoing message: **Agent** or the person's email / **You**.
+3. **Take over** → blue banner "You're handling this conversation". From then on the agent
+   stays silent in that chat (other chats are unaffected). Type a reply, press Enter.
+4. **Hand back to agent** → the agent answers the next message again.
+5. Replying without taking over first takes over automatically (the hint under the box says so).
+6. More than 24h since the customer's last message? The reply box is replaced by an
+   explanation: WhatsApp only allows approved templates then (those come with D7).
+7. New messages appear by themselves ("Live" top left); if you've scrolled up to read, a
+   "New messages" button appears instead of yanking you down.
+8. **Overview → Pause agent** is the kill switch for every chat at once (it asks first).
+
+To see it with real traffic you need `ANTHROPIC_AUTH_TOKEN` (for the agent's replies) and a
+customer message to Ninja Co's number. **Careful:** a reply from the inbox is a real WhatsApp
+message to a real customer.
+
+The old `/dashboard?token=…` page is gone, along with `DASHBOARD_TOKEN` (you can delete that
+line from `.env`; it's ignored).
+
 ---
 
 ## 4. What needs you
@@ -111,7 +135,9 @@ any French string is missing, blank, or just the English pasted in.
 
 ## 5. Known limitations and anything skipped
 
-*(Filled in as the run goes.)*
+- **D5:** the inbox updates live, but a person typing a reply is not shown to other people
+  looking at the same chat (no "someone is typing" or locking). Two people can both take over;
+  the last one is shown as the owner.
 
 ---
 

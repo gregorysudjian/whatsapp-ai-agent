@@ -169,28 +169,19 @@ the customer gets a sentence, the dashboard gets a red tile.
 
 ## Dashboard
 
-A read-only operator view, served by the agent itself at `/dashboard`. Live
-conversation list, per-thread history, delivery receipts, and an event log fed
-by server-sent events - no polling, no build step, no dependencies.
+A React app (in `web/`) served by the agent itself at `/`, behind per-person
+logins: a super admin sees every client, a business owner sees only their own.
+Build it with `npm run build:web`; during development `npm run dev:web` serves
+it with hot reload and proxies `/api` to the agent.
 
-The boot log prints the URL with its token:
+Create the first accounts with `npm run user -- bootstrap`. There is no shared
+token and no "localhost is trusted" rule: `cloudflared` runs on this machine, so
+a tunnelled request reaches Express from `127.0.0.1` like any local one.
 
-```
-{"msg":"dashboard_ready","url":"http://localhost:3000/dashboard?token=..."}
-```
-
-Set `DASHBOARD_TOKEN` in `.env` to keep that URL stable across restarts;
-leave it blank and a fresh token is minted every boot.
-
-**Why a token and not a localhost check.** `cloudflared` runs on your machine,
-so a tunnelled request reaches Express from `127.0.0.1` like any local one. An
-"only allow loopback" guard would therefore admit the entire internet the
-moment you start a tunnel. Every `/dashboard` and `/api` route is gated.
-
-The most useful column is the **24h window** badge per conversation: green
-while you can still send free-form replies, red once only templates will
-deliver. That limit is the single most common cause of "the bot stopped
-answering".
+The inbox shows each conversation's **24h window**: while it is open, a person
+can take the conversation over and reply; once it closes, only approved
+templates deliver. That limit is the single most common cause of "the bot
+stopped answering".
 
 ## Architecture
 
