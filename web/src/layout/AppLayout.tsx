@@ -187,7 +187,8 @@ export function AppLayout() {
                 <span className="truncate text-sm font-semibold">{business.name}</span>
               )}
               {business.status === "inactive" && <Badge tone="amber">{t("shell.inactive")}</Badge>}
-              {!business.connected && <Badge tone="red" className="hidden sm:inline-flex">{t("shell.notConnected")}</Badge>}
+              {/* A wrapper carries the breakpoint: the badge's own inline-flex would override "hidden". */}
+              {!business.connected && <span className="hidden sm:inline-flex"><Badge tone="red">{t("shell.notConnected")}</Badge></span>}
             </div>
           )}
           <div className="flex-1" />
