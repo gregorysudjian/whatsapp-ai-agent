@@ -18,6 +18,7 @@ import { createBusiness, setWhatsappCredentials } from "../store/businesses.ts";
 import { isPaused, pauseForHuman, recordInbound } from "../store/db.ts";
 import { listMessages } from "../store/queries.ts";
 import { listAudit } from "../store/audit.ts";
+import { quietDisclosure } from "../testing/setup.ts";
 
 const graph = new MockGraph();
 let server: Server;
@@ -70,6 +71,7 @@ before(async () => {
     appSecret: "inbox-b-secret-000000", verifyToken: "inbox-b-verify",
   });
   targetA = targetFor(A);
+  quietDisclosure(A);
   owner = await makeUser("owner", A);
   ownerB = await makeUser("owner", B);
 

@@ -478,6 +478,14 @@ const MIGRATIONS: Migration[] = [
       );
     `);
   },
+
+  /**
+   * 8 - Law 25: when each customer was told they are talking to an
+   * automated assistant, so the notice goes out once, on first contact.
+   */
+  (db) => {
+    addColumns(db, "contacts", { disclosed_at: "INTEGER" });
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

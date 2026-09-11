@@ -66,7 +66,7 @@ test("cells that would run as formulas are defused; quotes and commas survive", 
 test("the file starts with a BOM and uses CRLF", () => {
   const csv = toCsv(["a", "b"], [["1", "2"]]);
   assert.equal(csv.charCodeAt(0), 0xfeff);
-  assert.equal(csv, "﻿a,b\r\n1,2\r\n");
+  assert.equal(csv, "\uFEFFa,b\r\n1,2\r\n");
 });
 
 test("the list is this business's contacts, with their bookings counted", async () => {

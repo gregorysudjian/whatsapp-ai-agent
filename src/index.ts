@@ -5,6 +5,7 @@ import { listBusinesses, seedDefaultBusiness } from "./store/businesses.ts";
 import { getSettings, isConfigured } from "./store/settings.ts";
 import { startReminderScheduler } from "./core/reminders.ts";
 import { startCalendarSync } from "./calendar/google.ts";
+import { startPrivacyJobs } from "./core/privacy-jobs.ts";
 
 // Before the app starts taking webhooks: carries a pre-multi-tenancy install's
 // env credentials and hardcoded facts into business #1.
@@ -15,6 +16,8 @@ const app = createApp();
 startReminderScheduler();
 // Bookings mirror to Google Calendar for businesses that connected one.
 startCalendarSync();
+// Retention: conversations past each business's retention period are deleted.
+startPrivacyJobs();
 
 app.listen(config.port, () => {
   log.info("server_started", { port: config.port });
@@ -47,6 +50,13 @@ app.listen(config.port, () => {
   }
 
   log.info("dashboard_ready", { url: `http://localhost:${config.port}/` });
+
+  // Deployed behind HTTPS, these two must be on, or logins travel in the clear
+  // and the login throttle sees the proxy's address instead of the client's.
+  if (process.env["NODE_ENV"] === "production") {
+    if (process.env["COOKIE_SECURE"] !== "1") log.warn("cookie_not_secure", { hint: "Set COOKIE_SECURE=1 behind HTTPS." });
+    if (process.env["TRUST_PROXY"] !== "1") log.warn("proxy_not_trusted", { hint: "Set TRUST_PROXY=1 behind a reverse proxy." });
+  }
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

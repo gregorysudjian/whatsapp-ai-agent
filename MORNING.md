@@ -39,7 +39,7 @@ Then delete that file.
 | D12 | Admin panel | ✅ done — clients, WhatsApp credentials (write-only), owner accounts, usage & billing with CSV, audit log |
 | D11 | Monthly PDF report | ✅ done — one page per month in the business's language; the current month is reported to date |
 | D8 | Google Calendar | ✅ built and tested against a mock Google — needs your one-time Google Cloud setup to use for real |
-| D13 | Law 25 hardening | not started |
+| D13 | Law 25 hardening | ✅ done — retention with nightly clean-up, erase a customer, AI notice on first contact, header/cookie review, npm audit clean |
 | D14 | Deploy-ready | not started |
 
 ---
@@ -233,6 +233,27 @@ on Google's screen → back on the tab, "Connected as …". From then on:
 Until you do the setup, the tab says "not set up on this server yet" and nothing calls Google.
 Everything was tested against a stand-in Google server (connect, a link that works once and
 expires, encrypted token, create/move/cancel events, busy times, revoked access).
+
+### D13 — Privacy (Québec Law 25)
+**Agent settings → Privacy**
+1. **How long conversations are kept**: 24 months by default. Every night, messages, bookings
+   and customers older than that are deleted (for that business only). **Run the clean-up now**
+   does it on demand.
+2. **Tell each new customer, once, that an automated assistant answers** — on by default. The
+   notice goes right before the agent's first reply to someone, in English, French or Arabic
+   (whichever their first message looks like, among the business's languages), with your
+   privacy-policy link if you add one. *Your two existing live contacts haven't had it yet, so
+   they'll get it once, with their next reply.* Switch it off here if you prefer.
+
+**Contacts → bin icon** erases one customer when they ask to be forgotten: all their messages,
+bookings (and the Google Calendar events), the contact, and their number in the activity log —
+at this business only. It asks twice and records *that* an erasure happened, not who.
+
+Also tightened for deployment: no `X-Powered-By` header; a Permissions-Policy; HSTS once
+`COOKIE_SECURE=1`; the development origin is no longer trusted in production; expired sessions
+are now actually cleaned up (they weren't); the boot log warns if production runs without
+`COOKIE_SECURE=1` / `TRUST_PROXY=1`. **`npm audit`: 0 vulnerabilities** in both the server and
+the dashboard.
 
 ---
 

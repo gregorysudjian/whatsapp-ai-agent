@@ -4,6 +4,8 @@ import { log } from "../logger.ts";
 import { agentEnabled, humanTookOverSince, isPaused, recordEvent, recordUsage, type BusinessId } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
 import { handleBookingButton } from "./reminders.ts";
+import { getSettings } from "../store/settings.ts";
+import { claimDisclosure, disclosureText } from "../store/privacy.ts";
 
 /**
  * Phase 3: load history -> ask Claude -> send.
@@ -52,6 +54,11 @@ export async function handleMessage(businessId: BusinessId, msg: InboundMessage)
       { sender: "system" },
     );
     return;
+  }
+
+  // Law 25: the first time the agent talks to someone, it says what it is.
+  if (getSettings(businessId).privacy.aiDisclosure && claimDisclosure(businessId, msg.from)) {
+    await sendText(businessId, msg.from, disclosureText(businessId, msg.text), { sender: "system" });
   }
 
   const started = Date.now();

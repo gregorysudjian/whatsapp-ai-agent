@@ -23,6 +23,7 @@ import {
   agentEnabled, setAgentEnabled, isPaused, pauseForHuman, db, type BusinessId,
 } from "./db.ts";
 import { listConversations, listMessages, listEvents, stats } from "./queries.ts";
+import { quietDisclosure } from "../testing/setup.ts";
 import { createBooking } from "./bookings.ts";
 import { createService } from "./services.ts";
 import { subscribe, type AgentEvent } from "../core/events.ts";
@@ -89,6 +90,8 @@ before(async () => {
 
   targetA = targetFor(A);
   targetB = targetFor(B);
+  quietDisclosure(A);
+  quietDisclosure(B);
 
   await graph.listen(4599);
   server = createApp().listen(0);

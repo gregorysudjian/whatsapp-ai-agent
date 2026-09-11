@@ -467,6 +467,9 @@ separately, a Meta webhook per client). No actual deployment.
 - **Processes:** `TaskStop` on `npm run dev` leaves the `tsx watch` parent alive, and it will
   restart and **migrate the live DB** on the next file save. Kill it. The same goes for a timed-out
   `npm test`: the `node --test` runner survives `TaskStop`; find it by command line and kill it.
+- **The Write tool turns `\uXXXX` escapes into the raw characters** (a BOM, a no-break space,
+  Arabic letters in a regex). `src/testing/source-hygiene.test.ts` now fails on invisible ones;
+  write such files with a heredoc or fix them afterwards.
 - **Mutation checks: restore from a copy, never `git checkout <file>`.** That also reverts the
   step's uncommitted work in the file (it wiped D5's `db.ts` changes once; they were
   recovered from the transcript). `cp file /tmp/x.bak`, mutate, `cp` back.
@@ -590,5 +593,11 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D8, sync is a booking-change hook** (`onBookingChange` in bookings.ts), so every write path
   syncs; it never blocks or fails a booking. `executeTool` became async for free/busy.
 - **D8, events carry service, name and notes, not the phone number** (data minimisation).
+- **D13, the AI notice is on by default** (the plan says so, and it only ever accompanies a reply
+  the agent was sending anyway - it never starts a conversation). *Reverse:* default
+  `aiDisclosure: false` in settings.ts. Other tests switch it off via `quietDisclosure()`.
+- **D13, retention** deletes messages/events by timestamp, bookings by end time (business-local),
+  and contacts with nothing left; the audit trail is kept 24 months platform-wide. Erasure also
+  redacts the number from the audit log and records `contact_erased` with the last 4 digits.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

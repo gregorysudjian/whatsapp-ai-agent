@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowDown, Download, Search, Users } from "lucide-react";
+import { ArrowDown, Download, Search, Trash2, Users } from "lucide-react";
 import { api } from "../lib/api.ts";
 import { useI18n, type Key } from "../i18n/index.tsx";
-import { Alert, Badge, Card, cx, EmptyState, PageHeader, Spinner } from "../components/ui.tsx";
+import { Alert, Badge, Button, Card, cx, EmptyState, Modal, PageHeader, Spinner } from "../components/ui.tsx";
 
 interface Contact {
   waId: string;
@@ -35,6 +35,8 @@ export function Contacts() {
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [erasing, setErasing] = useState<Contact | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const id = setTimeout(() => setQ(search.trim()), 250);
@@ -49,7 +51,7 @@ export function Contacts() {
       .catch((err: unknown) => { if ((err as Error).name !== "AbortError") setError(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [bid, q, sort]);
+  }, [bid, q, sort, tick]);
 
   const exportHref = `/api/b/${bid}/contacts.csv?${new URLSearchParams({ q, sort, lang: locale })}`;
   const when = (ms: number | null) => (ms ? fmtDate(ms, { dateStyle: "medium" }) : "—");
@@ -119,6 +121,7 @@ export function Contacts() {
                       <SortHeader id="messages" right>{t("contacts.col.messages")}</SortHeader>
                       <th scope="col" className="px-4 py-2.5 text-right font-medium">{t("nav.bookings")}</th>
                       <th scope="col" className="px-4 py-2.5 font-medium">{t("contacts.col.status")}</th>
+                      <th scope="col" className="px-2 py-2.5"><span className="sr-only">{t("contacts.erase")}</span></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -139,6 +142,13 @@ export function Contacts() {
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">{fmtNumber(c.bookings)}</td>
                         <td className="px-4 py-2.5">{status(c)}</td>
+                        <td className="px-2 py-2.5 text-right">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setErasing(c); }}
+                            className="grid size-8 place-items-center rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+                            aria-label={t("contacts.eraseWho", { who: c.name ?? `+${c.waId}` })} title={t("contacts.erase")}>
+                            <Trash2 className="size-4" aria-hidden />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -150,25 +160,70 @@ export function Contacts() {
             {/* Phones: cards */}
             <ul className="space-y-2 md:hidden">
               {contacts.map((c) => (
-                <li key={c.waId}>
-                  <Link to={`/b/${bid}/inbox/${c.waId}`} className="block rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" dir="auto">{c.name ?? `+${c.waId}`}</p>
-                        {c.name && <p className="text-xs tabular-nums text-zinc-500" dir="ltr">+{c.waId}</p>}
-                      </div>
-                      {status(c)}
-                    </div>
-                    <p className="mt-2 text-xs text-zinc-500">
+                <li key={c.waId} className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="flex items-start justify-between gap-2">
+                    <Link to={`/b/${bid}/inbox/${c.waId}`} className="min-w-0 flex-1">
+                      <p className="truncate font-medium" dir="auto">{c.name ?? `+${c.waId}`}</p>
+                      {c.name && <p className="text-xs tabular-nums text-zinc-500" dir="ltr">+{c.waId}</p>}
+                    </Link>
+                    {status(c)}
+                  </div>
+                  <div className="mt-2 flex items-end justify-between gap-2">
+                    <p className="text-xs text-zinc-500">
                       {t("contacts.cardLine", { last: when(c.lastMessageTs), messages: fmtNumber(c.inbound + c.outbound), bookings: fmtNumber(c.bookings) })}
                     </p>
-                  </Link>
+                    <button type="button" onClick={() => setErasing(c)}
+                      className="grid size-8 shrink-0 place-items-center rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+                      aria-label={t("contacts.eraseWho", { who: c.name ?? `+${c.waId}` })}>
+                      <Trash2 className="size-4" aria-hidden />
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
           </div>
         )}
       {contacts && contacts.length >= 2000 && <p className="mt-3 text-xs text-zinc-500">{t("contacts.capped")}</p>}
+      {erasing && <EraseDialog bid={bid!} contact={erasing} onClose={() => setErasing(null)} onErased={() => { setErasing(null); setTick((n) => n + 1); }} />}
     </div>
+  );
+}
+
+/**
+ * Erasure is permanent, so it asks twice: the dialog, and a box to tick
+ * saying so. The server also insists on an explicit confirmation.
+ */
+function EraseDialog({ bid, contact, onClose, onErased }: { bid: string; contact: Contact; onClose: () => void; onErased: () => void }) {
+  const { t } = useI18n();
+  const [sure, setSure] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const who = contact.name ?? `+${contact.waId}`;
+  const erase = async () => {
+    setBusy(true);
+    setError(false);
+    try {
+      await api(`/api/b/${bid}/contacts/${contact.waId}/erase`, { method: "POST", body: { confirm: true } });
+      onErased();
+    } catch {
+      setError(true);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={t("contacts.eraseTitle", { who })}
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="danger" loading={busy} disabled={!sure} onClick={() => void erase()}>{t("contacts.eraseConfirm")}</Button>
+      </>}>
+      <div className="space-y-3 text-sm">
+        <p>{t("contacts.eraseBody")}</p>
+        <label className="flex items-start gap-2">
+          <input type="checkbox" className="mt-0.5 size-4 accent-red-600" checked={sure} onChange={(e) => setSure(e.target.checked)} />
+          <span>{t("contacts.eraseSure")}</span>
+        </label>
+        {error && <Alert>{t("common.error")}</Alert>}
+      </div>
+    </Modal>
   );
 }

@@ -148,7 +148,9 @@ function allowedOrigins(req: Request): Set<string> {
     set.add(`http://${host}`);
     set.add(`https://${host}`);
   }
-  for (const o of (process.env["ALLOWED_ORIGINS"] ?? "http://localhost:5173").split(",")) {
+  // The Vite dev server's origin is allowed by default in development only.
+  const fallback = process.env["NODE_ENV"] === "production" ? "" : "http://localhost:5173";
+  for (const o of (process.env["ALLOWED_ORIGINS"] ?? fallback).split(",").filter(Boolean)) {
     if (o.trim()) set.add(o.trim());
   }
   return set;
@@ -164,6 +166,10 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  // Only once the site is served over HTTPS (the same switch as the secure cookie):
+  // tells browsers never to try plain HTTP again.
+  if (process.env["COOKIE_SECURE"] === "1") res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   res.setHeader(
     "Content-Security-Policy",
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +

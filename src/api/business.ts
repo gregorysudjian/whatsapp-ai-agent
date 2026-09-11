@@ -15,7 +15,8 @@ import { getBusiness, updateBusinessProfile } from "../store/businesses.ts";
 import { listContacts, listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
 import { toCsv } from "./csv.ts";
 import { renderMonthlyReport, reportData } from "../reports/monthly.ts";
-import { availableSlotsWithCalendar, calendarStatus, disconnect, googleConfigured, startConnect } from "../calendar/google.ts";
+import { availableSlotsWithCalendar, calendarStatus, disconnect, googleConfigured, startConnect, syncBooking } from "../calendar/google.ts";
+import { eraseContact, purgeBusiness } from "../store/privacy.ts";
 import {
   agentEnabled, contactExists, db, handBack, isPaused, setAgentEnabled, takeOver, windowState,
 } from "../store/db.ts";
@@ -602,4 +603,33 @@ businessRouter.delete("/google", async (req: Request, res: Response) => {
   await disconnect(bid);
   record(req, "calendar_disconnected");
   res.json({ calendar: calendarStatus(bid) });
+});
+
+// --- privacy (Law 25) -----------------------------------------------------------
+
+/** "Run the clean-up now": the nightly retention purge, for this business only. */
+businessRouter.post("/privacy/purge", (req: Request, res: Response) => {
+  const bid = businessOf(req);
+  const counts = purgeBusiness(bid);
+  record(req, "retention_purge_run", undefined, { ...counts });
+  res.json({ counts, retentionMonths: getSettings(bid).privacy.retentionMonths });
+});
+
+/**
+ * Erase one customer: messages, bookings (and their calendar events), the
+ * contact, and their number in this business's events and audit trail. The
+ * body must say so explicitly - a stray POST should not erase anyone.
+ */
+businessRouter.post("/contacts/:waId/erase", (req: Request, res: Response) => {
+  const input = body(z.object({ confirm: z.literal(true) }).strict(), req, res);
+  if (!input) return;
+  const waId = waIdOf(req, res);
+  if (!waId) return;
+  const bid = businessOf(req);
+  const { counts, calendarBookings } = eraseContact(bid, waId);
+  // Calendar events of erased bookings go too (in the background, like any sync).
+  for (const b of calendarBookings) void syncBooking(bid, { ...b, status: "cancelled" });
+  // The record of the erasure names nobody: the last digits are enough to answer "did you do it?".
+  record(req, "contact_erased", `…${waId.slice(-4)}`, { ...counts });
+  res.json({ erased: counts });
 });

@@ -14,6 +14,7 @@ interface AgentSettings {
   handoff: { keywords: string[]; onAnger: boolean; onAccountChange: boolean; rules: string };
   neverDo: string[];
   reminders: { enabled: boolean; hoursBefore: number; templateName: string; templateLanguage: string };
+  privacy: { retentionMonths: number; aiDisclosure: boolean; privacyUrl: string };
 }
 interface DayHours { open: string; close: string }
 type Schedule = Partial<Record<string, DayHours>>;
@@ -25,7 +26,7 @@ interface SettingsResponse {
 }
 interface Draft { business: Profile; settings: AgentSettings; schedule: Schedule }
 
-const TABS = ["business", "hours", "services", "faqs", "tone", "handoff", "reminders", "calendar", "preview"] as const;
+const TABS = ["business", "hours", "services", "faqs", "tone", "handoff", "reminders", "calendar", "privacy", "preview"] as const;
 type Tab = (typeof TABS)[number];
 /** Monday first, as the week is read; values are JS weekdays (0 = Sunday). */
 const WEEK = ["1", "2", "3", "4", "5", "6", "0"];
@@ -99,7 +100,7 @@ export function Settings() {
   const tabLabel: Record<Tab, Key> = {
     business: "settings.tab.business", hours: "settings.tab.hours", services: "settings.tab.services",
     faqs: "settings.tab.faqs", tone: "settings.tab.tone", handoff: "settings.tab.handoff",
-    reminders: "settings.tab.reminders", calendar: "settings.tab.calendar", preview: "settings.tab.preview",
+    reminders: "settings.tab.reminders", calendar: "settings.tab.calendar", privacy: "settings.tab.privacy", preview: "settings.tab.preview",
   };
 
   return (
@@ -135,6 +136,7 @@ export function Settings() {
         {tab === "handoff" && <HandoffTab settings={draft.settings} setS={setS} />}
         {tab === "reminders" && <RemindersTab settings={draft.settings} setS={setS} />}
         {tab === "calendar" && <CalendarTab bid={String(bid)} outcome={params.get("google")} />}
+        {tab === "privacy" && <PrivacyTab bid={String(bid)} settings={draft.settings} setS={setS} />}
         {tab === "preview" && <PreviewTab bid={String(bid)} version={JSON.stringify(data)} />}
       </div>
 
@@ -501,6 +503,54 @@ function RemindersTab({ settings, setS }: { settings: AgentSettings; setS: (p: P
         <p className="mt-2 text-xs text-zinc-500">{t("settings.reminderPreviewHint")}</p>
       </div>
     </Section>
+  );
+}
+
+// --- Privacy (Law 25) ----------------------------------------------------------------
+
+const RETENTION_OPTIONS = [6, 12, 24, 36, 60];
+
+function PrivacyTab({ bid, settings, setS }: { bid: string; settings: AgentSettings; setS: (p: Partial<AgentSettings>) => void }) {
+  const { t, fmtNumber } = useI18n();
+  const p = settings.privacy;
+  const set = (patch: Partial<AgentSettings["privacy"]>) => setS({ privacy: { ...p, ...patch } });
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const runNow = async () => {
+    if (!window.confirm(t("privacy.runConfirm", { months: p.retentionMonths }))) return;
+    setRunning(true);
+    setResult(null);
+    try {
+      const r = await api<{ counts: { messages: number; bookings: number; contacts: number } }>(`/api/b/${bid}/privacy/purge`, { method: "POST", body: {} });
+      setResult(t("privacy.ranResult", { messages: fmtNumber(r.counts.messages), bookings: fmtNumber(r.counts.bookings), contacts: fmtNumber(r.counts.contacts) }));
+    } catch {
+      setResult(t("common.error"));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Section title={t("privacy.retention")} intro={t("privacy.retentionIntro")}>
+        <Select label={t("privacy.keepFor")} value={p.retentionMonths} onChange={(e) => set({ retentionMonths: Number(e.target.value) })}>
+          {[...new Set([...RETENTION_OPTIONS, p.retentionMonths])].sort((a, b) => a - b).map((m) => (
+            <option key={m} value={m}>{t("privacy.months", { n: m })}</option>
+          ))}
+        </Select>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" loading={running} onClick={() => void runNow()}>{t("privacy.runNow")}</Button>
+          {result && <p className="text-sm text-zinc-600 dark:text-zinc-300" role="status">{result}</p>}
+        </div>
+        <p className="text-xs text-zinc-500">{t("privacy.eraseHint")}</p>
+      </Section>
+      <Section title={t("privacy.disclosure")}>
+        <Switch checked={p.aiDisclosure} onChange={(aiDisclosure) => set({ aiDisclosure })} label={t("privacy.disclosureOn")} hint={t("privacy.disclosureHint")} />
+        <Field label={t("privacy.url")} hint={t("privacy.urlHint")} type="url" placeholder="https://" value={p.privacyUrl} maxLength={300}
+          onChange={(e) => set({ privacyUrl: e.target.value.trim() })} />
+      </Section>
+    </div>
   );
 }
 

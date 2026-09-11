@@ -22,6 +22,8 @@ export function createApp(): express.Express {
   // Behind a reverse proxy in production (TRUST_PROXY=1) so req.ip is the
   // client, not the proxy - which the login throttle depends on.
   if (process.env["TRUST_PROXY"] === "1") app.set("trust proxy", 1);
+  // No free advertisement of the framework and version to scanners.
+  app.disable("x-powered-by");
 
   app.use(securityHeaders);
 

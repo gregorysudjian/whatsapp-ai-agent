@@ -46,6 +46,16 @@ export const SettingsSchema = z.object({
     rules: text(1000),
   }).strict(),
   neverDo: z.array(text(200).min(1)).max(20),
+  /**
+   * Law 25. Defaulted so documents saved before this block existed still load.
+   * retentionMonths: conversations older than this are deleted nightly.
+   * aiDisclosure: tell each new customer, once, that an automated assistant answers.
+   */
+  privacy: z.object({
+    retentionMonths: z.number().int().min(1).max(120),
+    aiDisclosure: z.boolean(),
+    privacyUrl: z.union([z.literal(""), z.url({ protocol: /^https?$/ }).max(300)]),
+  }).strict().default({ retentionMonths: 24, aiDisclosure: true, privacyUrl: "" }),
   reminders: z.object({
     enabled: z.boolean(),
     hoursBefore: z.number().int().min(1).max(168),
@@ -74,6 +84,7 @@ export function defaultSettings(language: string): AgentSettings {
     // first, so a business opts in deliberately (and after Meta approves
     // the template).
     reminders: { enabled: false, hoursBefore: 24, templateName: "appointment_reminder", templateLanguage: "en" },
+    privacy: { retentionMonths: 24, aiDisclosure: true, privacyUrl: "" },
   };
 }
 

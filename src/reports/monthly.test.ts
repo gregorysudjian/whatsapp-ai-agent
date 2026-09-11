@@ -69,7 +69,7 @@ test("a real PDF, in French for a French business, with that month's numbers", a
     assert.ok(has(s), `missing "${s}" in ${JSON.stringify(text.slice(0, 12))}`);
   }
   assert.ok(text.includes("8"), "the inbound count");
-  assert.ok(has("75 %"), "6 of 8 replies by the agent, written the French way (a no-break space before %)");
+  assert.ok(has("75\u00a0%"), "6 of 8 replies by the agent, written the French way (a no-break space before %)");
   assert.ok(!has("Messages received"), "no English on a French report");
 });
 
