@@ -163,7 +163,7 @@ export async function generateReply(
           // several teaches the model to stop making parallel calls.
           const results: Anthropic.ToolResultBlockParam[] = [];
           for (const call of calls) {
-            const outcome = executeTool(call.name, call.input, ctx);
+            const outcome = await executeTool(call.name, call.input, ctx);
             if (outcome.handoff) handoff = true;
             results.push({
               type: "tool_result",

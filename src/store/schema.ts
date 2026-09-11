@@ -444,6 +444,40 @@ const MIGRATIONS: Migration[] = [
     const after = rowCount(db, "bookings");
     if (after !== before) throw new Error(`bookings: ${before} rows before, ${after} after`);
   },
+
+  /**
+   * 7 - Google Calendar.
+   *
+   * One connection per business: the Google account, its refresh token
+   * (encrypted like the WhatsApp secrets), which calendar, and whether it
+   * still works - Google revokes refresh tokens (a password change, or after
+   * 7 days while the OAuth app is in Testing), and the owner must be told.
+   *
+   * oauth_states holds each pending "Connect Google" click: a random nonce,
+   * the business and user it was made for, and an expiry. The callback
+   * deletes the row it uses, so a state works once and cannot be invented.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE calendar_connections (
+        business_id       INTEGER PRIMARY KEY REFERENCES businesses(id),
+        google_email      TEXT,
+        refresh_token_enc TEXT NOT NULL,
+        calendar_id       TEXT NOT NULL DEFAULT 'primary',
+        status            TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected','needs_reconnect')),
+        connected_at      INTEGER NOT NULL,
+        last_sync_at      INTEGER,
+        last_error        TEXT
+      );
+      CREATE TABLE oauth_states (
+        nonce       TEXT PRIMARY KEY,
+        business_id INTEGER NOT NULL REFERENCES businesses(id),
+        user_id     INTEGER NOT NULL REFERENCES users(id),
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL
+      );
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

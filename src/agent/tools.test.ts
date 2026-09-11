@@ -28,7 +28,7 @@ const nextWeekend = () => nextDay(false);
 
 // --- schemas --------------------------------------------------------------
 
-test("every tool is strict with a closed schema", () => {
+test("every tool is strict with a closed schema", async () => {
   for (const tool of TOOLS) {
     assert.equal(tool.strict, true, `${tool.name} must be strict`);
     assert.equal(
@@ -41,7 +41,7 @@ test("every tool is strict with a closed schema", () => {
 
 // --- orders are out of scope ------------------------------------------------
 
-test("order lookup is not offered to the model", () => {
+test("order lookup is not offered to the model", async () => {
   // Removed by decision: with no order data source, the tool could only ever
   // answer "no order found" - telling customers their real orders don't exist.
   assert.ok(!TOOLS.some((t) => t.name === "lookup_order"));
@@ -54,7 +54,7 @@ const svc = () => listServices(B)[0]!;
 const book = (waId: string, start: string, name = "X") =>
   createBooking(B, { waId, customerName: name, serviceId: svc().id, start, source: "agent" });
 
-test("availability lists free future half-hour starts only", () => {
+test("availability lists free future half-hour starts only", async () => {
   const slots = availableSlots(B, nextWeekday(), { serviceId: svc().id });
   assert.ok(slots.length > 0);
   for (const slot of slots) {
@@ -63,11 +63,11 @@ test("availability lists free future half-hour starts only", () => {
   }
 });
 
-test("a malformed date yields nothing rather than throwing", () => {
+test("a malformed date yields nothing rather than throwing", async () => {
   assert.deepEqual(availableSlots(B, "next tuesday"), []);
 });
 
-test("booking takes a slot, and the same slot cannot be taken twice", () => {
+test("booking takes a slot, and the same slot cannot be taken twice", async () => {
   const slot = `${nextWeekday()}T11:00`;
   const first = book(CUSTOMER, slot, "First");
   assert.equal(first.ok, true);
@@ -80,47 +80,47 @@ test("booking takes a slot, and the same slot cannot be taken twice", () => {
     "a start whose hour would run into the booking is not offered either");
 });
 
-test("the past cannot be booked", () => {
+test("the past cannot be booked", async () => {
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   assert.deepEqual(book(CUSTOMER, `${yesterday}T10:00`), { ok: false, reason: "past" });
 });
 
-test("outside opening hours is refused", () => {
+test("outside opening hours is refused", async () => {
   assert.deepEqual(book(CUSTOMER, `${nextWeekday()}T03:00`), { ok: false, reason: "closed" });
 });
 
-test("3pm is closing time, so a 60-minute service starts at 2pm at the latest", () => {
+test("3pm is closing time, so a 60-minute service starts at 2pm at the latest", async () => {
   const day = nextWeekday();
   assert.deepEqual(book(CUSTOMER, `${day}T14:30`), { ok: false, reason: "closed" }, "would run past closing");
   assert.ok(availableSlots(B, day, { serviceId: svc().id }).every((s) => s <= `${day}T14:00`));
 });
 
-test("the agent books on the half hour", () => {
+test("the agent books on the half hour", async () => {
   assert.deepEqual(book(CUSTOMER, `${nextWeekday()}T09:15`), { ok: false, reason: "off_grid" });
 });
 
-test("weekends are closed", () => {
+test("weekends are closed", async () => {
   const day = nextWeekend();
   assert.deepEqual(availableSlots(B, day, { serviceId: svc().id }), []);
   assert.deepEqual(book(CUSTOMER, `${day}T10:00`), { ok: false, reason: "closed" });
 });
 
-test("a malformed slot is refused, not coerced", () => {
+test("a malformed slot is refused, not coerced", async () => {
   assert.deepEqual(book(CUSTOMER, "tomorrow at 2"), { ok: false, reason: "malformed" });
 });
 
-test("a failed booking tells the model what to do next", () => {
-  const out = executeTool("create_booking", { service_id: svc().id, start: "garbage", name: "X", notes: "" }, ctx);
+test("a failed booking tells the model what to do next", async () => {
+  const out = await executeTool("create_booking", { service_id: svc().id, start: "garbage", name: "X", notes: "" }, ctx);
   assert.match(out.content, /Booking failed/);
   assert.match(out.content, /alternative/, "the model needs a next step, not just an error");
 });
 
-test("an unknown service is refused by availability and booking alike", () => {
-  assert.match(executeTool("check_availability", { date: nextWeekday(), service_id: 999999 }, ctx).content, /Unknown service_id/);
-  assert.match(executeTool("create_booking", { service_id: 999999, start: `${nextWeekday()}T10:00`, name: "X", notes: "" }, ctx).content, /Unknown service_id/);
+test("an unknown service is refused by availability and booking alike", async () => {
+  assert.match((await executeTool("check_availability", { date: nextWeekday(), service_id: 999999 }, ctx)).content, /Unknown service_id/);
+  assert.match((await executeTool("create_booking", { service_id: 999999, start: `${nextWeekday()}T10:00`, name: "X", notes: "" }, ctx)).content, /Unknown service_id/);
 });
 
-test("a retired service cannot be offered or booked", () => {
+test("a retired service cannot be offered or booked", async () => {
   const retired = createService(B, { name: "Old class", durationMin: 60, priceCents: null, currency: "USD" });
   deactivateService(B, retired.id);
   assert.deepEqual(availableSlots(B, nextWeekday(), { serviceId: retired.id }), []);
@@ -130,41 +130,41 @@ test("a retired service cannot be offered or booked", () => {
 
 // --- a customer's own bookings -------------------------------------------------
 
-test("the agent books, lists, moves and cancels a customer's own booking", () => {
+test("the agent books, lists, moves and cancels a customer's own booking", async () => {
   const me = { businessId: B, waId: "17000000020", senderName: "Maya" };
   const day = nextWeekday();
-  const made = executeTool("create_booking", { service_id: svc().id, start: `${day}T08:00`, name: "Maya", notes: "two kids" }, me);
+  const made = await executeTool("create_booking", { service_id: svc().id, start: `${day}T08:00`, name: "Maya", notes: "two kids" }, me);
   assert.match(made.content, /^Booked\./);
   const id = Number(/booking_id (\d+)/.exec(made.content)![1]);
   assert.equal(getBooking(B, id)?.waId, me.waId, "the owner of the booking is the verified sender, never tool input");
   assert.equal(getBooking(B, id)?.notes, "two kids");
 
-  const listed = JSON.parse(executeTool("list_my_bookings", {}, me).content) as { booking_id: number }[];
+  const listed = JSON.parse((await executeTool("list_my_bookings", {}, me)).content) as { booking_id: number }[];
   assert.deepEqual(listed.map((b) => b.booking_id), [id]);
 
-  const moved = executeTool("reschedule_my_booking", { booking_id: id, start: `${day}T12:30` }, me);
+  const moved = await executeTool("reschedule_my_booking", { booking_id: id, start: `${day}T12:30` }, me);
   assert.match(moved.content, /^Moved\./);
   assert.equal(getBooking(B, id)?.start, `${day}T12:30`);
   assert.equal(getBooking(B, id)?.end, `${day}T13:30`);
 
-  const cancelled = executeTool("cancel_my_booking", { booking_id: id }, me);
+  const cancelled = await executeTool("cancel_my_booking", { booking_id: id }, me);
   assert.match(cancelled.content, /^Cancelled\./);
   assert.equal(getBooking(B, id)?.status, "cancelled");
-  assert.equal(executeTool("list_my_bookings", {}, me).content, "This customer has no upcoming bookings.");
+  assert.equal((await executeTool("list_my_bookings", {}, me)).content, "This customer has no upcoming bookings.");
   assert.ok(availableSlots(B, day, { serviceId: svc().id }).includes(`${day}T12:30`), "a cancelled booking frees its time");
 });
 
-test("a customer cannot see, cancel or move someone else's booking", () => {
+test("a customer cannot see, cancel or move someone else's booking", async () => {
   const day = nextWeekday();
   const theirs = book("17000000031", `${day}T13:00`, "Owner Of It");
   assert.ok(theirs.ok);
   const id = theirs.ok ? theirs.booking.id : 0;
   const intruder = { businessId: B, waId: "17000000032", senderName: "Intruder" };
 
-  assert.equal(executeTool("list_my_bookings", {}, intruder).content, "This customer has no upcoming bookings.");
-  const cancel = executeTool("cancel_my_booking", { booking_id: id }, intruder);
+  assert.equal((await executeTool("list_my_bookings", {}, intruder)).content, "This customer has no upcoming bookings.");
+  const cancel = await executeTool("cancel_my_booking", { booking_id: id }, intruder);
   assert.match(cancel.content, /No such booking/, "someone else's booking reads exactly like a missing one");
-  const move = executeTool("reschedule_my_booking", { booking_id: id, start: `${day}T08:30` }, intruder);
+  const move = await executeTool("reschedule_my_booking", { booking_id: id, start: `${day}T08:30` }, intruder);
   assert.match(move.content, /No such booking/);
   assert.equal(getBooking(B, id)?.status, "booked");
   assert.equal(getBooking(B, id)?.start, `${day}T13:00`);
@@ -172,7 +172,7 @@ test("a customer cannot see, cancel or move someone else's booking", () => {
 
 // --- escalation -----------------------------------------------------------
 
-test("escalating pauses the conversation and signals the caller", () => {
+test("escalating pauses the conversation and signals the caller", async () => {
   const wa = "17000000009";
   const msg: InboundMessage = {
     id: "tool-seed-1", from: wa, senderName: "T", timestamp: new Date(), text: "get me a human",
@@ -180,7 +180,7 @@ test("escalating pauses the conversation and signals the caller", () => {
   };
   recordInbound(B, msg);
 
-  const out = executeTool("escalate_to_human", { reason: "customer asked" }, { businessId: B, waId: wa, senderName: "T" });
+  const out = await executeTool("escalate_to_human", { reason: "customer asked" }, { businessId: B, waId: wa, senderName: "T" });
 
   assert.equal(out.handoff, true, "the caller must know to stop replying");
   assert.equal(isPaused(B, wa), true);
@@ -189,13 +189,13 @@ test("escalating pauses the conversation and signals the caller", () => {
 
 // --- unknown tools --------------------------------------------------------
 
-test("an invented tool name is reported, not thrown", () => {
-  const out = executeTool("refund_everything", {}, ctx);
+test("an invented tool name is reported, not thrown", async () => {
+  const out = await executeTool("refund_everything", {}, ctx);
   assert.match(out.content, /Unknown tool/);
 });
 
-test("business info is honest when the persona is unconfigured", () => {
-  const out = executeTool("get_business_info", {}, ctx);
+test("business info is honest when the persona is unconfigured", async () => {
+  const out = await executeTool("get_business_info", {}, ctx);
   // persona.ts ships with placeholders, so this is the shipped behaviour.
   assert.match(out.content, /not been configured|hours/);
 });

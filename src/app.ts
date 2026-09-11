@@ -13,6 +13,7 @@ import {
 import { authRouter } from "./auth/routes.ts";
 import { businessRouter } from "./api/business.ts";
 import { adminRouter } from "./api/admin.ts";
+import { googleRouter } from "./api/google.ts";
 import { webApp } from "./web.ts";
 
 export function createApp(): express.Express {
@@ -48,6 +49,8 @@ export function createApp(): express.Express {
   // decided once, by the middleware, before any handler runs.
   app.use("/api/b/:bid", requireAuth, requireBusinessAccess, businessRouter);
   app.use("/api/admin", requireAuth, requireSuperAdmin, adminRouter);
+  // Google's redirect back after consent; authenticated by its single-use state.
+  app.use("/api/google", googleRouter);
 
   // After every real /api route: an unknown /api path is a JSON 404, not the
   // app's HTML shell.

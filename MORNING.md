@@ -38,7 +38,7 @@ Then delete that file.
 | D10 | Contacts and CSV export | ✅ done — searchable, sortable list; a spreadsheet-safe CSV export, audited |
 | D12 | Admin panel | ✅ done — clients, WhatsApp credentials (write-only), owner accounts, usage & billing with CSV, audit log |
 | D11 | Monthly PDF report | ✅ done — one page per month in the business's language; the current month is reported to date |
-| D8 | Google Calendar | not started |
+| D8 | Google Calendar | ✅ built and tested against a mock Google — needs your one-time Google Cloud setup to use for real |
 | D13 | Law 25 hardening | not started |
 | D14 | Deploy-ready | not started |
 
@@ -216,6 +216,24 @@ recorded in the audit log.
 Limitation: the PDF uses the built-in Helvetica font, which has no Arabic letters — fine for the
 report's own words (English/French), but a business *name* written in Arabic would not print.
 
+### D8 — Google Calendar
+**Built, not yet switched on** — it needs a Google "OAuth client", which only you can create
+(about 10 minutes, once): follow [docs/google-calendar-setup.md](docs/google-calendar-setup.md),
+then put the three `GOOGLE_*` values in `.env` and restart.
+
+Then: **Agent settings → Google Calendar → Connect Google Calendar** → pick your trial account
+on Google's screen → back on the tab, "Connected as …". From then on:
+- every booking (agent or dashboard) appears in that calendar as `<service> - <name>`; moving or
+  cancelling it updates or deletes the event;
+- times you're busy in the calendar aren't offered to customers;
+- if Google is down, bookings carry on and the tab shows the error;
+- while the Google app is in "Testing", Google drops the connection after 7 days — the tab
+  then says so, with a **Connect again** button.
+
+Until you do the setup, the tab says "not set up on this server yet" and nothing calls Google.
+Everything was tested against a stand-in Google server (connect, a link that works once and
+expires, encrypted token, create/move/cancel events, busy times, revoked access).
+
 ---
 
 ## 4. What needs you
@@ -225,8 +243,10 @@ report's own words (English/French), but a business *name* written in Arabic wou
    them before the bot goes live: **Agent settings → Services → Edit**.
 2. **Submit the reminder template to Meta** ([docs/whatsapp-templates.md](docs/whatsapp-templates.md)),
    then switch reminders on in Agent settings → Reminders.
-3. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
-4. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
+3. **Google Calendar setup** ([docs/google-calendar-setup.md](docs/google-calendar-setup.md)), then
+   connect it in Agent settings → Google Calendar.
+4. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
+5. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
 
 ---
 

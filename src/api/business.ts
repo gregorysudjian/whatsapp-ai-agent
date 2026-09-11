@@ -15,6 +15,7 @@ import { getBusiness, updateBusinessProfile } from "../store/businesses.ts";
 import { listContacts, listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
 import { toCsv } from "./csv.ts";
 import { renderMonthlyReport, reportData } from "../reports/monthly.ts";
+import { availableSlotsWithCalendar, calendarStatus, disconnect, googleConfigured, startConnect } from "../calendar/google.ts";
 import {
   agentEnabled, contactExists, db, handBack, isPaused, setAgentEnabled, takeOver, windowState,
 } from "../store/db.ts";
@@ -29,7 +30,7 @@ import { buildContextBlock, buildSystemPrompt } from "../agent/prompt.ts";
 import { body, handleError, query } from "./validate.ts";
 import { addDays, MAX_RANGE_DAYS, overview } from "../store/overview.ts";
 import {
-  availableSlots, BOOKING_STATUSES, createBooking, listBookings, updateBooking, wallClockNow,
+  BOOKING_STATUSES, createBooking, listBookings, updateBooking, wallClockNow,
   type BookingFailure, type BookingPatch, type BookingStatus,
 } from "../store/bookings.ts";
 
@@ -359,11 +360,11 @@ const SlotsQuery = z.object({
   exceptId: z.coerce.number().int().positive().optional(),
 });
 
-businessRouter.get("/bookings/slots", (req: Request, res: Response) => {
+businessRouter.get("/bookings/slots", async (req: Request, res: Response) => {
   const input = query(SlotsQuery, req, res);
   if (!input) return;
   res.json({
-    slots: availableSlots(businessOf(req), input.date, {
+    slots: await availableSlotsWithCalendar(businessOf(req), input.date, {
       serviceId: input.serviceId,
       ...(input.exceptId ? { exceptId: input.exceptId } : {}),
     }),
@@ -573,4 +574,32 @@ businessRouter.get("/reports/monthly", async (req: Request, res: Response) => {
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}-${input.month}.pdf"`);
   res.setHeader("Cache-Control", "no-store");
   res.send(pdf);
+});
+
+// --- Google Calendar ------------------------------------------------------------
+
+businessRouter.get("/google", (req: Request, res: Response) => {
+  res.json({ calendar: calendarStatus(businessOf(req)) });
+});
+
+/**
+ * Starts the OAuth dance: the browser is sent to the returned URL. A POST
+ * (so the origin check applies) because it creates the single-use state.
+ */
+businessRouter.post("/google/connect", (req: Request, res: Response) => {
+  const bid = businessOf(req);
+  if (!googleConfigured()) {
+    res.status(409).json({ error: "not_configured" });
+    return;
+  }
+  const url = startConnect(bid, getAuth(req).user.id);
+  record(req, "calendar_connect_started");
+  res.json({ url });
+});
+
+businessRouter.delete("/google", async (req: Request, res: Response) => {
+  const bid = businessOf(req);
+  await disconnect(bid);
+  record(req, "calendar_disconnected");
+  res.json({ calendar: calendarStatus(bid) });
 });

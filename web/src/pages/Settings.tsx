@@ -25,7 +25,7 @@ interface SettingsResponse {
 }
 interface Draft { business: Profile; settings: AgentSettings; schedule: Schedule }
 
-const TABS = ["business", "hours", "services", "faqs", "tone", "handoff", "reminders", "preview"] as const;
+const TABS = ["business", "hours", "services", "faqs", "tone", "handoff", "reminders", "calendar", "preview"] as const;
 type Tab = (typeof TABS)[number];
 /** Monday first, as the week is read; values are JS weekdays (0 = Sunday). */
 const WEEK = ["1", "2", "3", "4", "5", "6", "0"];
@@ -67,6 +67,13 @@ export function Settings() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  // On a phone the tab row scrolls; a link to a later tab should show it selected.
+  // (Above the early return below: hooks must run in the same order every render.)
+  const loaded = !!data;
+  useEffect(() => {
+    document.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [tab, loaded]);
+
   if (!data || !draft) return error ? <Alert>{error}</Alert> : <Spinner label={t("common.loading")} />;
 
   const setS = (patch: Partial<AgentSettings>) => { setSaved(false); setDraft({ ...draft, settings: { ...draft.settings, ...patch } }); };
@@ -92,7 +99,7 @@ export function Settings() {
   const tabLabel: Record<Tab, Key> = {
     business: "settings.tab.business", hours: "settings.tab.hours", services: "settings.tab.services",
     faqs: "settings.tab.faqs", tone: "settings.tab.tone", handoff: "settings.tab.handoff",
-    reminders: "settings.tab.reminders", preview: "settings.tab.preview",
+    reminders: "settings.tab.reminders", calendar: "settings.tab.calendar", preview: "settings.tab.preview",
   };
 
   return (
@@ -127,6 +134,7 @@ export function Settings() {
         {tab === "tone" && <ToneTab settings={draft.settings} setS={setS} languageNames={data.languageNames} />}
         {tab === "handoff" && <HandoffTab settings={draft.settings} setS={setS} />}
         {tab === "reminders" && <RemindersTab settings={draft.settings} setS={setS} />}
+        {tab === "calendar" && <CalendarTab bid={String(bid)} outcome={params.get("google")} />}
         {tab === "preview" && <PreviewTab bid={String(bid)} version={JSON.stringify(data)} />}
       </div>
 
@@ -492,6 +500,94 @@ function RemindersTab({ settings, setS }: { settings: AgentSettings; setS: (p: P
         </div>
         <p className="mt-2 text-xs text-zinc-500">{t("settings.reminderPreviewHint")}</p>
       </div>
+    </Section>
+  );
+}
+
+// --- Google Calendar ----------------------------------------------------------------
+
+interface CalendarStatus {
+  configured: boolean; connected: boolean; status: "not_connected" | "connected" | "needs_reconnect";
+  email: string | null; calendarId: string | null; lastSyncAt: number | null; lastError: string | null;
+}
+
+/** Not part of the settings draft: connecting is an action, saved the moment Google says yes. */
+function CalendarTab({ bid, outcome }: { bid: string; outcome: string | null }) {
+  const { t, fmtDate } = useI18n();
+  const [cal, setCal] = useState<CalendarStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ calendar: CalendarStatus }>(`/api/b/${bid}/google`).then((r) => setCal(r.calendar)).catch(() => setError(t("common.error")));
+  }, [bid, t]);
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ url: string }>(`/api/b/${bid}/google/connect`, { method: "POST", body: {} });
+      window.location.assign(r.url); // off to Google's consent screen; it sends the browser back here
+    } catch {
+      setError(t("common.error"));
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    if (!window.confirm(t("calendar.disconnectConfirm"))) return;
+    setBusy(true);
+    try {
+      const r = await api<{ calendar: CalendarStatus }>(`/api/b/${bid}/google`, { method: "DELETE" });
+      setCal(r.calendar);
+    } catch {
+      setError(t("common.error"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const outcomes: Record<string, { tone: "green" | "amber" | "red"; key: Key }> = {
+    connected: { tone: "green", key: "calendar.outcome.connected" },
+    cancelled: { tone: "amber", key: "calendar.outcome.cancelled" },
+  };
+  const shown = outcome ? outcomes[outcome] ?? { tone: "red" as const, key: "calendar.outcome.failed" as Key } : null;
+
+  if (!cal) return error ? <Alert>{error}</Alert> : <Spinner label={t("common.loading")} />;
+  return (
+    <Section intro={t("calendar.intro")}>
+      {shown && <Alert tone={shown.tone}>{t(shown.key)}</Alert>}
+      {error && <Alert>{error}</Alert>}
+      {!cal.configured ? (
+        <Alert tone="amber">{t("calendar.notConfigured")}</Alert>
+      ) : cal.status === "not_connected" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">{t("calendar.notConnected")}</p>
+          <Button loading={busy} onClick={() => void connect()}>{t("calendar.connect")}</Button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {cal.status === "needs_reconnect" ? (
+            <Alert>{t("calendar.needsReconnect")}{cal.lastError ? ` ${cal.lastError}` : ""}</Alert>
+          ) : (
+            <p className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge tone="green">{t("admin.connected")}</Badge>
+              <span>{t("calendar.connectedAs", { email: cal.email ?? "?" })}</span>
+            </p>
+          )}
+          <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
+            <li>{t("calendar.does1")}</li>
+            <li>{t("calendar.does2")}</li>
+          </ul>
+          <p className="text-xs text-zinc-500">
+            {cal.lastSyncAt ? t("calendar.lastSync", { when: fmtDate(cal.lastSyncAt) }) : t("calendar.noSyncYet")}
+          </p>
+          {cal.status === "connected" && cal.lastError && <Alert tone="amber">{t("calendar.syncProblem", { error: cal.lastError })}</Alert>}
+          <div className="flex flex-wrap gap-2">
+            {cal.status === "needs_reconnect" && <Button loading={busy} onClick={() => void connect()}>{t("calendar.reconnect")}</Button>}
+            <Button variant="secondary" disabled={busy} onClick={() => void disconnect()}>{t("calendar.disconnect")}</Button>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }

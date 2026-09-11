@@ -583,5 +583,12 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D11, pdfkit 0.20.2 with built-in Helvetica** (no font files to ship; no Arabic glyphs).
   The current month is reported to date, compared with the equal-length window before it.
   `src/testing/report-preview.ts` renders and photographs a report from the demo database.
+- **D8, the OAuth callback doesn't need the session cookie** (SameSite=Strict isn't sent on
+  Google's cross-site redirect). A random single-use state stored server-side (business, user,
+  10-minute expiry, deleted on use) carries the binding; the user must still have access at
+  callback time. Mutation-tested (reuse, expiry, access).
+- **D8, sync is a booking-change hook** (`onBookingChange` in bookings.ts), so every write path
+  syncs; it never blocks or fails a booking. `executeTool` became async for free/busy.
+- **D8, events carry service, name and notes, not the phone number** (data minimisation).
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

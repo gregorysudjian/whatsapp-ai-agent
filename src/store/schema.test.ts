@@ -201,7 +201,7 @@ test("migration 6 carries old one-hour bookings into bookings v2", () => {
       VALUES (7, 1, '15550001', 'Sam', '2030-01-02T10:00', 2, 1000),
              (8, 1, '15550002', NULL, '2030-01-02T23:00', 1, 2000);
     `);
-    assert.deepEqual(migrate(db), [6]);
+    assert.deepEqual(migrate(db, 6), [6]);
     const rows = db.prepare(`SELECT * FROM bookings ORDER BY id`).all() as Record<string, unknown>[];
     assert.equal(rows.length, 2);
     assert.deepEqual(

@@ -8,8 +8,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { log } from "../logger.ts";
 import { recordEvent, pauseForHuman, type BusinessId } from "../store/db.ts";
+import { availableSlotsWithCalendar } from "../calendar/google.ts";
 import {
-  availableSlots, cancelForCustomer, createBooking, rescheduleForCustomer, upcomingForCustomer,
+  cancelForCustomer, createBooking, rescheduleForCustomer, upcomingForCustomer,
   type Booking, type BookingFailure,
 } from "../store/bookings.ts";
 import { getBusiness } from "../store/businesses.ts";
@@ -136,11 +137,11 @@ export interface ToolOutcome {
  * Opus 5 varies its JSON escaping in tool arguments, so anything comparing
  * raw serialised input would be subtly wrong.
  */
-export function executeTool(
+export async function executeTool(
   name: string,
   input: unknown,
   ctx: ToolContext,
-): ToolOutcome {
+): Promise<ToolOutcome> {
   const args = (input ?? {}) as Record<string, unknown>;
   log.info("tool_called", { name, businessId: ctx.businessId, waId: ctx.waId });
   recordEvent(ctx.businessId, "info", "tool_called", { name, waId: ctx.waId });
@@ -173,7 +174,8 @@ export function executeTool(
       const serviceId = Number(args["service_id"]);
       const service = getService(ctx.businessId, serviceId);
       if (!service || !service.active) return { content: WHY.no_service };
-      const slots = availableSlots(ctx.businessId, String(args["date"] ?? ""), { serviceId });
+      // Minus whatever the owner's Google Calendar says is busy, when connected.
+      const slots = await availableSlotsWithCalendar(ctx.businessId, String(args["date"] ?? ""), { serviceId });
       return {
         content: slots.length
           ? JSON.stringify({ service: service.name, duration_min: service.durationMin, free_starts: slots })

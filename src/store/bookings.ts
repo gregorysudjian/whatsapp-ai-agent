@@ -233,6 +233,35 @@ export function availableSlots(businessId: BusinessId, date: string, q: SlotQuer
 
 // --- writes --------------------------------------------------------------------
 
+type BookingListener = (businessId: BusinessId, booking: Booking) => void;
+const listeners = new Set<BookingListener>();
+
+/**
+ * Told after every booking is created or changed, whoever changed it (agent,
+ * owner, a customer's button). Calendar sync hangs off this, so no write
+ * path can forget to sync. A listener's failure never undoes the booking.
+ */
+export function onBookingChange(fn: BookingListener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function changed(businessId: BusinessId, result: BookingResult): BookingResult {
+  if (result.ok) {
+    for (const fn of listeners) {
+      try { fn(businessId, result.booking); } catch { /* a listener's problem, not the booking's */ }
+    }
+  }
+  return result;
+}
+
+const eventIdStmt = db.prepare(`UPDATE bookings SET calendar_event_id = ? WHERE business_id = ? AND id = ?`);
+
+/** Record (or clear) the calendar event mirroring a booking. Deliberately not a change: no listeners. */
+export function setCalendarEventId(businessId: BusinessId, id: number, eventId: string | null): void {
+  eventIdStmt.run(eventId, businessId, id);
+}
+
 export type BookingFailure =
   | "past" | "taken" | "closed" | "malformed" | "off_grid" | "no_service" | "not_found" | "cancelled";
 
@@ -296,7 +325,7 @@ export function createBooking(businessId: BusinessId, input: NewBooking): Bookin
   const service = getService(businessId, input.serviceId);
   if (!service || !service.active) return { ok: false, reason: "no_service" };
 
-  return inWriteTx((): BookingResult => {
+  return changed(businessId, inWriteTx((): BookingResult => {
     const slot = checkSlot(businessId, input.start, service.durationMin, input.source);
     if (!slot.ok) return slot;
     const now = Date.now();
@@ -306,7 +335,7 @@ export function createBooking(businessId: BusinessId, input: NewBooking): Bookin
       input.source, (input.notes ?? "").trim().slice(0, 1000), now, now,
     ).lastInsertRowid);
     return { ok: true, booking: getBooking(businessId, id)! };
-  });
+  }));
 }
 
 export interface BookingPatch {
@@ -330,7 +359,7 @@ const updateStmt = db.prepare(`
  * its length), or reviving a cancelled one all re-check.
  */
 export function updateBooking(businessId: BusinessId, id: number, patch: BookingPatch, source: BookingSource): BookingResult {
-  return inWriteTx((): BookingResult => {
+  return changed(businessId, inWriteTx((): BookingResult => {
     const current = getBooking(businessId, id);
     if (!current) return { ok: false, reason: "not_found" };
 
@@ -379,7 +408,7 @@ export function updateBooking(businessId: BusinessId, id: number, patch: Booking
       now, businessId, id,
     );
     return { ok: true, booking: getBooking(businessId, id)! };
-  });
+  }));
 }
 
 // --- what a customer may do to their own bookings ----------------------------------

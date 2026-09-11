@@ -74,6 +74,21 @@ export const config = {
   },
 
   /**
+   * Google Calendar (optional). Without the three OAuth values the feature
+   * reports itself as not set up and nothing calls Google. The URL overrides
+   * exist so the suite can point everything at src/testing/mock-google.ts.
+   */
+  google: {
+    clientId: optional("GOOGLE_CLIENT_ID", ""),
+    clientSecret: optional("GOOGLE_CLIENT_SECRET", ""),
+    redirectUri: optional("GOOGLE_REDIRECT_URI", ""),
+    authUrl: optional("GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth"),
+    tokenUrl: optional("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+    revokeUrl: optional("GOOGLE_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
+    apiBase: optional("GOOGLE_API_BASE", "https://www.googleapis.com"),
+  },
+
+  /**
    * Seed for the DEFAULT business only, and optional.
    *
    * Credentials now live per business in the database, encrypted. These env
