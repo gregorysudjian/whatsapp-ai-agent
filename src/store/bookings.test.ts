@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { availableSlots, createBooking, isPastInZone, wallClockNow } from "./bookings.ts";
+import { createService } from "./services.ts";
 import {
   createBusiness, getBusiness, setBusinessTimezone, setSchedule, DEFAULT_BUSINESS_ID,
 } from "./businesses.ts";
@@ -31,7 +32,7 @@ test("a business's weekday rules follow the calendar date, not the server's zone
 
   // 2030-01-06 is a Sunday; the day after is a Monday.
   assert.deepEqual(availableSlots(biz.id, "2030-01-06"), [
-    "2030-01-06T09:00", "2030-01-06T10:00", "2030-01-06T11:00",
+    "2030-01-06T09:00", "2030-01-06T09:30", "2030-01-06T10:00", "2030-01-06T10:30", "2030-01-06T11:00",
   ]);
   assert.deepEqual(availableSlots(biz.id, "2030-01-07"), []);
 });
@@ -42,8 +43,10 @@ test("a date that does not exist is refused, not rolled over", () => {
   setSchedule(biz.id, Object.fromEntries(
     ["0", "1", "2", "3", "4", "5", "6"].map((d) => [d, { open: "08:00", close: "18:00" }]),
   ));
-  assert.deepEqual(createBooking(biz.id, "1555", "X", "2030-02-30T10:00", 1), { ok: false, reason: "malformed" });
-  assert.equal(createBooking(biz.id, "1555", "X", "2030-03-01T10:00", 1).ok, true);
+  const serviceId = createService(biz.id, { name: "Visit", durationMin: 60, priceCents: null, currency: "CAD" }).id;
+  const at = (start: string) => createBooking(biz.id, { waId: "1555", customerName: "X", serviceId, start, source: "agent" });
+  assert.deepEqual(at("2030-02-30T10:00"), { ok: false, reason: "malformed" });
+  assert.equal(at("2030-03-01T10:00").ok, true);
 });
 
 test("a timezone change takes effect, and a bad one is refused", () => {

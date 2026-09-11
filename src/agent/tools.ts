@@ -8,10 +8,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { log } from "../logger.ts";
 import { recordEvent, pauseForHuman, type BusinessId } from "../store/db.ts";
-import { availableSlots, createBooking } from "../store/bookings.ts";
+import {
+  availableSlots, cancelForCustomer, createBooking, rescheduleForCustomer, upcomingForCustomer,
+  type Booking, type BookingFailure,
+} from "../store/bookings.ts";
 import { getBusiness } from "../store/businesses.ts";
 import { getSchedule, getSettings, LANGUAGE_NAMES } from "../store/settings.ts";
-import { formatPrice, listServices } from "../store/services.ts";
+import { formatPrice, getService, listServices } from "../store/services.ts";
 import { describeHours } from "./prompt.ts";
 
 /**
@@ -34,30 +37,63 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "check_availability",
-    description: "List bookable time slots that are still free on a given date.",
+    description: "List the start times still free on a date for one service (its duration is taken into account).",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         date: { type: "string", description: "Date as YYYY-MM-DD" },
+        service_id: { type: "integer", description: "The service_id from the services list" },
       },
-      required: ["date"],
+      required: ["date", "service_id"],
       additionalProperties: false,
     },
   },
   {
     name: "create_booking",
     description:
-      "Book a free slot. Check availability first. Fails if the slot is taken, in the past, or outside opening hours.",
+      "Book a service at a free start time for this customer. Check availability first. Fails if the time is taken, in the past, or outside opening hours.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        slot: { type: "string", description: "Slot as YYYY-MM-DDTHH:00" },
-        name: { type: "string", description: "Name for the booking" },
-        party_size: { type: "integer", description: "Number of people" },
+        service_id: { type: "integer", description: "The service_id from the services list" },
+        start: { type: "string", description: "Start as YYYY-MM-DDTHH:MM, one of the times check_availability returned" },
+        name: { type: "string", description: "The customer's name for the booking" },
+        notes: { type: "string", description: "Anything the business should know, e.g. the number of people; empty string if nothing" },
       },
-      required: ["slot", "name", "party_size"],
+      required: ["service_id", "start", "name", "notes"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_my_bookings",
+    description: "This customer's upcoming bookings, with their booking_id. Use before cancelling or rescheduling.",
+    strict: true,
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
+    name: "cancel_my_booking",
+    description: "Cancel one of this customer's own upcoming bookings. Confirm with the customer first.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { booking_id: { type: "integer", description: "From list_my_bookings" } },
+      required: ["booking_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "reschedule_my_booking",
+    description: "Move one of this customer's own upcoming bookings to a new free start time (same service). Check availability first.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        booking_id: { type: "integer", description: "From list_my_bookings" },
+        start: { type: "string", description: "New start as YYYY-MM-DDTHH:MM" },
+      },
+      required: ["booking_id", "start"],
       additionalProperties: false,
     },
   },
@@ -134,31 +170,50 @@ export function executeTool(
     }
 
     case "check_availability": {
-      const slots = availableSlots(ctx.businessId, String(args["date"] ?? ""));
+      const serviceId = Number(args["service_id"]);
+      const service = getService(ctx.businessId, serviceId);
+      if (!service || !service.active) return { content: WHY.no_service };
+      const slots = availableSlots(ctx.businessId, String(args["date"] ?? ""), { serviceId });
       return {
         content: slots.length
-          ? JSON.stringify({ free: slots })
-          : "No free slots on that date. Suggest another day.",
+          ? JSON.stringify({ service: service.name, duration_min: service.durationMin, free_starts: slots })
+          : "No free times on that date for this service. Suggest another day.",
       };
     }
 
     case "create_booking": {
-      const result = createBooking(
-        ctx.businessId,
-        ctx.waId,
-        String(args["name"] ?? ctx.senderName ?? ""),
-        String(args["slot"] ?? ""),
-        Number(args["party_size"] ?? 1),
-      );
-      if (result.ok) return { content: `Booked for ${result.slot}.` };
+      const result = createBooking(ctx.businessId, {
+        // Whose booking it is comes from the verified webhook, never from input.
+        waId: ctx.waId,
+        customerName: String(args["name"] ?? "") || ctx.senderName || null,
+        serviceId: Number(args["service_id"]),
+        start: String(args["start"] ?? ""),
+        notes: String(args["notes"] ?? ""),
+        source: "agent",
+      });
+      if (result.ok) return { content: `Booked. ${describe(result.booking)} Confirm these details to the customer.` };
+      return { content: `Booking failed. ${WHY[result.reason]} Offer an alternative.` };
+    }
 
-      const why: Record<string, string> = {
-        past: "That time is in the past.",
-        taken: "That slot has just been taken.",
-        closed: "That time is outside opening hours.",
-        malformed: "That is not a valid slot; use YYYY-MM-DDTHH:00.",
+    case "list_my_bookings": {
+      const mine = upcomingForCustomer(ctx.businessId, ctx.waId);
+      return {
+        content: mine.length
+          ? JSON.stringify(mine.map((b) => ({ booking_id: b.id, service: b.serviceName, start: b.start, end: b.end, status: b.status })))
+          : "This customer has no upcoming bookings.",
       };
-      return { content: `Booking failed. ${why[result.reason]} Offer an alternative.` };
+    }
+
+    case "cancel_my_booking": {
+      const result = cancelForCustomer(ctx.businessId, ctx.waId, Number(args["booking_id"]));
+      if (result.ok) return { content: `Cancelled. ${describe(result.booking)}` };
+      return { content: `Could not cancel. ${WHY[result.reason]}` };
+    }
+
+    case "reschedule_my_booking": {
+      const result = rescheduleForCustomer(ctx.businessId, ctx.waId, Number(args["booking_id"]), String(args["start"] ?? ""));
+      if (result.ok) return { content: `Moved. ${describe(result.booking)} Confirm the new time to the customer.` };
+      return { content: `Could not reschedule. ${WHY[result.reason]} Offer an alternative.` };
     }
 
     case "escalate_to_human": {
@@ -175,4 +230,21 @@ export function executeTool(
       log.warn("unknown_tool", { name });
       return { content: `Unknown tool: ${name}` };
   }
+}
+
+/** What the model is told about a failure, in words it can pass on. */
+const WHY: Record<BookingFailure, string> = {
+  past: "That time is in the past.",
+  taken: "That time has just been taken.",
+  closed: "That time is outside opening hours, or the service would run past closing.",
+  malformed: "That is not a valid time; use YYYY-MM-DDTHH:MM.",
+  off_grid: "Bookings start on the hour or the half hour.",
+  no_service: "Unknown service_id. Use one from the services list.",
+  // Someone else's booking reads exactly like a missing one.
+  not_found: "No such booking for this customer. Use list_my_bookings.",
+  cancelled: "That booking is already cancelled.",
+};
+
+function describe(b: Booking): string {
+  return `booking_id ${b.id}: ${b.serviceName ?? "appointment"}, ${b.start.replace("T", " ")} to ${b.end.slice(11)}, name ${b.customerName ?? "not given"}.`;
 }

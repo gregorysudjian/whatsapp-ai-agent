@@ -78,6 +78,13 @@ export function buildSystemPrompt({ businessName, timezone, settings: s, schedul
       push(`- ${svc.name} (service_id ${svc.id}): ${svc.durationMin} min, ${price ?? "price not set"}${svc.description ? `. ${svc.description}` : ""}`);
     }
     push("Quote only these prices. For a service whose price is not set, say you do not have the price and offer to ask a person.", "");
+    push(
+      "Bookings:",
+      "- To book: agree on the service, call check_availability for the day, offer two or three of the free times, and once the customer picks one and you have their name, call create_booking. Never say something is booked until create_booking succeeds.",
+      "- Repeat the service, day, time and name back to the customer after booking.",
+      "- A customer can see, cancel or move only their own bookings: use list_my_bookings, then cancel_my_booking or reschedule_my_booking. Confirm before cancelling.",
+      "",
+    );
   } else {
     push("No services are listed yet. Do not offer or book anything; offer to pass questions to a person.", "");
   }

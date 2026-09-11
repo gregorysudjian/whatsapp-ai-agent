@@ -163,8 +163,7 @@ test("migration 4 turns old facts into v2 settings, placeholders into blanks", (
   // A database exactly as schema 3 left it, holding a v1 facts document.
   const { db, file } = tempDb();
   try {
-    migrate(db);
-    db.exec(`DROP TABLE services; PRAGMA user_version = 3;`);
+    migrate(db, 3);
     db.prepare(`UPDATE businesses SET default_language = 'fr' WHERE id = 1`).run();
     db.prepare(`INSERT INTO business_settings (business_id, facts, schedule, updated_at) VALUES (1, ?, '{}', 1)`).run(JSON.stringify({
       name: "Ninja Co",
@@ -187,6 +186,38 @@ test("migration 4 turns old facts into v2 settings, placeholders into blanks", (
     assert.deepEqual(v2.languages, ["fr"], "starts from the business's own language");
     assert.equal(v2.reminders.enabled, false);
     assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'services'`).get(), "services table created");
+  } finally {
+    db.close();
+    fs.rmSync(file, { force: true });
+  }
+});
+
+test("migration 6 carries old one-hour bookings into bookings v2", () => {
+  const { db, file } = tempDb();
+  try {
+    migrate(db, 5);
+    db.exec(`
+      INSERT INTO bookings (id, business_id, wa_id, name, slot, party_size, created_at)
+      VALUES (7, 1, '15550001', 'Sam', '2030-01-02T10:00', 2, 1000),
+             (8, 1, '15550002', NULL, '2030-01-02T23:00', 1, 2000);
+    `);
+    assert.deepEqual(migrate(db), [6]);
+    const rows = db.prepare(`SELECT * FROM bookings ORDER BY id`).all() as Record<string, unknown>[];
+    assert.equal(rows.length, 2);
+    assert.deepEqual(
+      { id: rows[0]!["id"], wa: rows[0]!["wa_id"], name: rows[0]!["customer_name"], start: rows[0]!["start_at"], end: rows[0]!["end_at"],
+        dur: rows[0]!["duration_min"], party: rows[0]!["party_size"], status: rows[0]!["status"], source: rows[0]!["source"], created: rows[0]!["created_at"] },
+      { id: 7, wa: "15550001", name: "Sam", start: "2030-01-02T10:00", end: "2030-01-02T11:00",
+        dur: 60, party: 2, status: "booked", source: "agent", created: 1000 },
+      "ids survive, so anything that referenced a booking still finds it",
+    );
+    assert.equal(rows[1]!["end_at"], "2030-01-03T00:00", "an hour from 23:00 ends at midnight");
+    // The overlap rule replaced the unique slot: two rows may now share a start
+    // at the SQL level (the store refuses it), so the constraint must be gone.
+    db.exec(`INSERT INTO bookings (business_id, start_at, end_at, duration_min, created_at, updated_at)
+             VALUES (1, '2030-01-02T10:00', '2030-01-02T10:30', 30, 1, 1)`);
+    assert.throws(() => db.exec(`INSERT INTO bookings (business_id, start_at, end_at, duration_min, created_at, updated_at)
+             VALUES (1, '2030-01-02T10:00', '2030-01-02T09:00', 30, 1, 1)`), /CHECK/, "an end before its start is refused");
   } finally {
     db.close();
     fs.rmSync(file, { force: true });

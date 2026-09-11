@@ -3,8 +3,9 @@
  * a dozen components is not worth a component library's setup and weight.
  */
 
-import React, { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import React, { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { Loader2, X } from "lucide-react";
+import { useI18n } from "../i18n/index.tsx";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -196,6 +197,64 @@ export function Select({ label, hint, className, children, ...rest }:
     <Labelled label={label} hint={hint} className={className}>
       {(id, d) => <select id={id} aria-describedby={d} className={cx(controlBase, "h-10 pr-8")} {...rest}>{children}</select>}
     </Labelled>
+  );
+}
+
+// --- Modal / drawer ---------------------------------------------------------
+
+/**
+ * A dialog: centred, or a panel from the right edge (`side`). Full screen on
+ * a phone either way. Escape and the backdrop close it; focus moves in on
+ * open and back to whatever opened it on close; the page behind stops
+ * scrolling.
+ */
+export function Modal({ open, onClose, title, children, footer, side = false, wide = false }: {
+  open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; side?: boolean; wide?: boolean;
+}) {
+  const titleId = useId();
+  const panel = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
+
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // The first field if there is one, else the panel itself.
+    const first = panel.current?.querySelector<HTMLElement>("input, select, textarea");
+    (first ?? panel.current)?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+      opener?.focus?.();
+    };
+    // onClose changes identity every render; re-running would steal focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  if (!open) return null;
+  return (
+    <div className={cx("fixed inset-0 z-50 flex", side ? "justify-end" : "items-center justify-center sm:p-4")}>
+      <div className="absolute inset-0 bg-zinc-950/40 backdrop-blur-[1px]" onClick={onClose} aria-hidden />
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        className={cx(
+          "relative flex h-full w-full flex-col bg-white shadow-xl outline-none dark:bg-zinc-900",
+          side ? "sm:max-w-md sm:border-l sm:border-zinc-200 dark:sm:border-zinc-800"
+            : cx("sm:h-auto sm:max-h-[90dvh] sm:rounded-xl", wide ? "sm:max-w-2xl" : "sm:max-w-lg"),
+        )}>
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          <h2 id={titleId} className="min-w-0 truncate text-base font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} aria-label={t("common.close")}
+            className="grid size-9 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+            <X className="size-5" aria-hidden />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-200 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:border-zinc-800">{footer}</div>}
+      </div>
+    </div>
   );
 }
 

@@ -32,7 +32,7 @@ Then delete that file.
 | D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | ✅ done — sign-in, forced password change, layout, overview tiles |
 | D4 | Agent settings → system prompt | ✅ done — 8-tab settings page, services with prices, live prompt preview |
 | D5 | Inbox with human takeover | ✅ done — live two-pane inbox, take over / reply / hand back, old token dashboard retired |
-| D6 | Bookings v2 and bookings page | not started |
+| D6 | Bookings v2 and bookings page | ✅ done — services and durations, statuses, overlap rule, customers manage their own, week/list page |
 | D7 | Reminders and confirmations | not started |
 | D9 | Overview stats and charts | not started |
 | D10 | Contacts and CSV export | not started |
@@ -121,6 +121,29 @@ message to a real customer.
 The old `/dashboard?token=…` page is gone, along with `DASHBOARD_TOKEN` (you can delete that
 line from `.env`; it's ignored).
 
+### D6 — Bookings
+**Bookings** in the sidebar.
+1. **Week** view: a calendar of the week, times in Beirut time whatever your computer's
+   timezone. Grey = closed. The red line is "now". Colours: blue booked, green confirmed,
+   grey completed, red no-show (cancelled ones are hidden here).
+2. Click an empty spot in the grid → **New booking** at that time. The dialog offers the free
+   times for the chosen service (on the half hour, inside opening hours); "Or another time"
+   lets you book any minute, even outside opening hours — only overlaps and the past are refused.
+3. Click a booking → the side panel: change the name, service, date, time, status or notes and
+   **Save**; quick buttons **Mark confirmed** (upcoming) or **Mark completed / no-show** (past);
+   **Open the conversation** jumps to the inbox.
+4. **Cancel booking** → optionally tick "Tell the customer on WhatsApp" (a message is
+   pre-written). If their last message was over 24h ago, WhatsApp won't deliver it and the page
+   says so — the booking is still cancelled.
+5. **List** view: Upcoming / Past 90 days / Cancelled. On a phone, the week is a day-by-day list.
+
+On WhatsApp, the agent now books a specific service (taking its length into account), and a
+customer can ask to see, move or cancel **their own** bookings — never anyone else's, even with
+a guessed booking number.
+
+Rules everywhere: two bookings may touch (10:00–11:00 then 11:00–12:00) but never overlap,
+whoever made them.
+
 ---
 
 ## 4. What needs you
@@ -138,6 +161,9 @@ line from `.env`; it's ignored).
 - **D5:** the inbox updates live, but a person typing a reply is not shown to other people
   looking at the same chat (no "someone is typing" or locking). Two people can both take over;
   the last one is shown as the owner.
+- **D6:** one booking at a time per business (a single room or teacher). A business that runs
+  two classes at once would need a "capacity" per service; not built.
+- **D6:** the bookings page refreshes when you come back to the tab, not live while you watch it.
 
 ---
 

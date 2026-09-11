@@ -10,6 +10,7 @@ import { ChangePassword } from "./pages/ChangePassword.tsx";
 import { Overview } from "./pages/Overview.tsx";
 import { Settings } from "./pages/Settings.tsx";
 import { Inbox } from "./pages/Inbox.tsx";
+import { Bookings } from "./pages/Bookings.tsx";
 import { NotFound, Placeholder } from "./pages/Placeholder.tsx";
 
 /** Signed in, password settled - or sent where they need to go. */
@@ -71,7 +72,7 @@ export function App() {
                   <Route index element={<Navigate to="overview" replace />} />
                   <Route path="overview" element={<RequireBusiness><Overview /></RequireBusiness>} />
                   <Route path="inbox/:waId?" element={<RequireBusiness><Inbox /></RequireBusiness>} />
-                  <Route path="bookings" element={<RequireBusiness><Placeholder title="nav.bookings" /></RequireBusiness>} />
+                  <Route path="bookings" element={<RequireBusiness><Bookings /></RequireBusiness>} />
                   <Route path="contacts" element={<RequireBusiness><Placeholder title="nav.contacts" /></RequireBusiness>} />
                   <Route path="settings" element={<RequireBusiness><Settings /></RequireBusiness>} />
                   <Route path="reports" element={<RequireBusiness><Placeholder title="nav.reports" /></RequireBusiness>} />

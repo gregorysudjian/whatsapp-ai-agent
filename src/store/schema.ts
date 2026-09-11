@@ -393,12 +393,66 @@ const MIGRATIONS: Migration[] = [
     });
     db.exec(`UPDATE contacts SET control = CASE WHEN paused = 1 THEN 'human' ELSE 'ai' END`);
   },
+
+  /**
+   * 6 - bookings v2: services, durations, statuses.
+   *
+   * A booking now has a start and an end (business-local wall-clock
+   * "YYYY-MM-DDTHH:MM", like the old slot) and a lifecycle. UNIQUE(business,
+   * slot) goes: with durations, two bookings can collide without sharing a
+   * start, so double-booking is prevented by an overlap check inside a write
+   * transaction instead (store/bookings.ts).
+   *
+   * Old rows keep their ids and become one-hour, agent-made, 'booked'
+   * bookings. wa_id becomes nullable: an owner can book someone who phoned.
+   */
+  (db) => {
+    const before = rowCount(db, "bookings");
+    db.exec(`
+      CREATE TABLE bookings_v3 (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_id       INTEGER NOT NULL REFERENCES businesses(id),
+        wa_id             TEXT,
+        customer_name     TEXT,
+        service_id        INTEGER REFERENCES services(id),
+        start_at          TEXT NOT NULL,
+        end_at            TEXT NOT NULL,
+        duration_min      INTEGER NOT NULL CHECK (duration_min > 0),
+        party_size        INTEGER NOT NULL DEFAULT 1 CHECK (party_size > 0),
+        status            TEXT NOT NULL DEFAULT 'booked'
+                          CHECK (status IN ('booked','confirmed','cancelled','completed','no_show')),
+        source            TEXT NOT NULL DEFAULT 'agent' CHECK (source IN ('agent','owner')),
+        notes             TEXT NOT NULL DEFAULT '',
+        reminder_sent_at  INTEGER,
+        confirmed_at      INTEGER,
+        cancelled_at      INTEGER,
+        calendar_event_id TEXT,
+        created_at        INTEGER NOT NULL,
+        updated_at        INTEGER NOT NULL,
+        CHECK (end_at > start_at)
+      );
+      INSERT INTO bookings_v3 (id, business_id, wa_id, customer_name, start_at, end_at, duration_min,
+                               party_size, status, source, created_at, updated_at)
+        SELECT id, business_id, wa_id, name, slot, strftime('%Y-%m-%dT%H:%M', slot, '+60 minutes'), 60,
+               MAX(party_size, 1), 'booked', 'agent', created_at, created_at
+        FROM bookings ORDER BY id;
+      DROP TABLE bookings;
+      ALTER TABLE bookings_v3 RENAME TO bookings;
+      CREATE INDEX bookings_by_start ON bookings (business_id, start_at);
+      CREATE INDEX bookings_by_customer ON bookings (business_id, wa_id, start_at);
+    `);
+    const after = rowCount(db, "bookings");
+    if (after !== before) throw new Error(`bookings: ${before} rows before, ${after} after`);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
-/** Brings `db` up to the current version. Returns the versions applied. */
-export function migrate(db: DatabaseSync): number[] {
+/**
+ * Brings `db` up to the current version (or to `target`, which only tests
+ * use, to build a genuine older database). Returns the versions applied.
+ */
+export function migrate(db: DatabaseSync, target: number = MIGRATIONS.length): number[] {
   const current = Number(
     (db.prepare("PRAGMA user_version").get() as Record<string, unknown>)["user_version"],
   );
@@ -408,7 +462,7 @@ export function migrate(db: DatabaseSync): number[] {
   // afterwards so business_id references are enforced for every write.
   db.exec("PRAGMA foreign_keys = OFF");
 
-  for (let version = current + 1; version <= MIGRATIONS.length; version++) {
+  for (let version = current + 1; version <= Math.min(target, MIGRATIONS.length); version++) {
     db.exec("BEGIN IMMEDIATE");
     try {
       MIGRATIONS[version - 1]!(db);

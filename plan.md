@@ -546,5 +546,17 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D5, the stream re-checks the session** on every 25-second heartbeat without counting as
   activity: logging out or losing access closes it, and an open tab doesn't keep a session
   alive past its 12-hour idle limit.
+- **D6, times stay wall-clock strings** ("2030-01-31T10:00", business-local), with an end time
+  and a duration: the timezone-correct "past" check keeps working, string order is time order
+  for the overlap check, and Google Calendar accepts a wall-clock time plus a timezone as is.
+- **D6, one resource:** one booking at a time per business, whoever made it; back-to-back is
+  allowed. *Reverse:* a capacity per service, counted in the overlap query.
+- **D6, owner vs agent rules:** the agent books on the 30-minute grid inside opening hours; an
+  owner may pick any minute, even outside hours. Neither can book the past, an overlap, or past
+  midnight.
+- **D6, `migrate(db, target)`:** tests build a genuine older database instead of faking
+  `user_version` on a new one (which re-ran migration 6 on an already-new table).
+- **D6, deep links:** `?view=list`, `?open=<id>`, `?new=1` on the bookings page (also how the
+  screenshots reach the drawer and the dialog).
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

@@ -6,6 +6,10 @@
 import type { BusinessId } from "../store/db.ts";
 import { recordInbound, recordOutbound, recordStatus, recordUsage, pauseForHuman, takeOver } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
+import { db } from "../store/db.ts";
+import { getBusiness } from "../store/businesses.ts";
+import { listServices } from "../store/services.ts";
+import { wallClockNow } from "../store/bookings.ts";
 
 let n = 0;
 function inbound(bid: BusinessId, from: string, name: string, text: string, minutesAgo: number): void {
@@ -23,6 +27,56 @@ function outbound(bid: BusinessId, to: string, text: string, opts: { staff?: num
   if (!opts.staff) recordUsage(bid, id, { inputTokens: 1800, outputTokens: 70, cacheReadTokens: 1500, latencyMs: 2400 });
   if (opts.status) {
     recordStatus(bid, { id, status: opts.status, timestamp: "0", recipient_id: to } as Parameters<typeof recordStatus>[1]);
+  }
+}
+
+const insertBooking = db.prepare(`
+  INSERT INTO bookings (business_id, wa_id, customer_name, service_id, start_at, end_at, duration_min, status, source, notes, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const addDay = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * A week of bookings around today, in every status. Written directly (the
+ * demo needs past ones, which the store rightly refuses to create) and laid
+ * out so none overlap.
+ */
+function seedBookings(bid: BusinessId): void {
+  const tz = getBusiness(bid)?.timezone ?? "UTC";
+  const today = wallClockNow(tz).slice(0, 10);
+  const weekday = (d: string) => new Date(`${d}T12:00:00Z`).getUTCDay();
+  /** The n-th working day before (n < 0) or after (n > 0) today; 0 is today. */
+  const workday = (n: number) => {
+    let d = today;
+    for (let left = Math.abs(n); left > 0;) {
+      d = addDay(d, Math.sign(n));
+      if (weekday(d) !== 0 && weekday(d) !== 6) left--;
+    }
+    return d;
+  };
+  const [robotics, coding] = listServices(bid);
+  if (!robotics || !coding) return;
+  const rows: [number, string, string | null, string, typeof robotics, string, "agent" | "owner", string][] = [
+    [-3, "09:00", "96170111222", "Rami Haddad", robotics, "completed", "agent", ""],
+    [-3, "11:00", "33612345678", "Sophie Martin", coding, "completed", "agent", ""],
+    [-2, "10:00", "96171555666", "Layla Nassar", coding, "no_show", "agent", ""],
+    [-2, "13:30", null, "Karim (phoned)", robotics, "completed", "owner", "Paid cash"],
+    [-1, "08:30", "96178333444", "Nour Khalil", robotics, "completed", "agent", "Two kids"],
+    [0, "13:00", "33698765432", "Julien Roy", coding, "confirmed", "agent", ""],
+    [1, "10:00", "96170111222", "Rami Haddad", robotics, "booked", "agent", ""],
+    [1, "14:00", "15145550199", "Marc Tremblay", coding, "cancelled", "agent", ""],
+    [2, "09:30", "33612345678", "Sophie Martin", coding, "confirmed", "agent", ""],
+    [2, "11:00", null, "Hadi's school trip", robotics, "booked", "owner", "Group of 6"],
+    [3, "08:00", "96178333444", "Nour Khalil", robotics, "booked", "agent", ""],
+    [4, "10:00", "96171555666", "Layla Nassar", coding, "booked", "agent", ""],
+  ];
+  const now = Date.now();
+  for (const [offset, time, waId, name, svc, status, source, notes] of rows) {
+    const start = `${workday(offset)}T${time}`;
+    const endMin = Number(time.slice(0, 2)) * 60 + Number(time.slice(3)) + svc.durationMin;
+    const end = `${start.slice(0, 11)}${String(Math.floor(endMin / 60)).padStart(2, "0")}:${String(endMin % 60).padStart(2, "0")}`;
+    insertBooking.run(bid, waId, name, svc.id, start, end, svc.durationMin, status, source, notes, now, now);
   }
 }
 
@@ -44,6 +98,7 @@ export function seedDemoData(bid: BusinessId, staffUserId?: number): void {
 
   inbound(bid, "15145550199", "Marc Tremblay", "I was charged twice last month, I want to talk to someone", 12);
   pauseForHuman(bid, "15145550199", "billing dispute - customer asked for a person");
+  seedBookings(bid);
 
   if (staffUserId) {
     inbound(bid, "33698765432", "Julien Roy", "Is there a discount for siblings?", 25);

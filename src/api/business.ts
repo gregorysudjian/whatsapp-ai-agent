@@ -25,6 +25,10 @@ import { createService, deactivateService, listServices, updateService } from ".
 import { audit } from "../store/audit.ts";
 import { buildContextBlock, buildSystemPrompt } from "../agent/prompt.ts";
 import { body, handleError, query } from "./validate.ts";
+import {
+  availableSlots, BOOKING_STATUSES, createBooking, listBookings, updateBooking, wallClockNow,
+  type BookingFailure, type BookingPatch, type BookingStatus,
+} from "../store/bookings.ts";
 
 // mergeParams: the :bid in the mount path is visible to requireBusinessAccess.
 export const businessRouter: Router = Router({ mergeParams: true });
@@ -315,3 +319,153 @@ businessRouter.get("/stream", (req: Request, res: Response) => {
 
 /** Comment frames keep idle connections from being reaped by intermediaries. */
 export const STREAM_HEARTBEAT_MS = 25_000;
+
+// --- bookings -------------------------------------------------------------------
+
+const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a date like 2030-01-31");
+const WALL_TIME = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "a time like 2030-01-31T10:00");
+
+const BookingsQuery = z.object({
+  from: ISO_DATE.optional(),
+  to: ISO_DATE.optional(),
+  status: z.enum(["active", ...BOOKING_STATUSES]).optional(),
+});
+
+businessRouter.get("/bookings", (req: Request, res: Response) => {
+  const input = query(BookingsQuery, req, res);
+  if (!input) return;
+  const bid = businessOf(req);
+  const b = getBusiness(bid)!;
+  res.json({
+    bookings: listBookings(bid, {
+      ...(input.from ? { from: input.from } : {}),
+      ...(input.to ? { to: input.to } : {}),
+      ...(input.status ? { status: input.status } : {}),
+    }),
+    // Bookings are wall-clock times where the business is; the page needs
+    // "now" in that same zone, not the browser's.
+    now: wallClockNow(b.timezone),
+    timezone: b.timezone,
+    schedule: getSchedule(bid),
+  });
+});
+
+const SlotsQuery = z.object({
+  date: ISO_DATE,
+  serviceId: z.coerce.number().int().positive(),
+  exceptId: z.coerce.number().int().positive().optional(),
+});
+
+businessRouter.get("/bookings/slots", (req: Request, res: Response) => {
+  const input = query(SlotsQuery, req, res);
+  if (!input) return;
+  res.json({
+    slots: availableSlots(businessOf(req), input.date, {
+      serviceId: input.serviceId,
+      ...(input.exceptId ? { exceptId: input.exceptId } : {}),
+    }),
+  });
+});
+
+/** How each refusal reaches the browser: a conflict with the calendar, or a bad request. */
+function bookingFailure(res: Response, reason: BookingFailure): void {
+  const status = reason === "not_found" ? 404
+    : reason === "malformed" || reason === "no_service" ? 400
+    : 409;
+  res.status(status).json({ error: reason });
+}
+
+const NewBookingBody = z.object({
+  customerName: z.string().trim().min(1).max(120),
+  waId: z.union([z.literal(""), z.string().regex(/^\d{5,20}$/, "digits only, with the country code")]).optional(),
+  serviceId: z.number().int().positive(),
+  start: WALL_TIME,
+  notes: z.string().max(1000).optional(),
+  partySize: z.number().int().min(1).max(100).optional(),
+}).strict();
+
+businessRouter.post("/bookings", (req: Request, res: Response) => {
+  const input = body(NewBookingBody, req, res);
+  if (!input) return;
+  const result = createBooking(businessOf(req), {
+    waId: input.waId || null,
+    customerName: input.customerName,
+    serviceId: input.serviceId,
+    start: input.start,
+    source: "owner",
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.partySize !== undefined ? { partySize: input.partySize } : {}),
+  });
+  if (!result.ok) return bookingFailure(res, result.reason);
+  record(req, "booking_created", String(result.booking.id), { start: result.booking.start, serviceId: result.booking.serviceId });
+  res.status(201).json({ booking: result.booking });
+});
+
+const bookingId = (req: Request) => {
+  const raw = req.params["id"];
+  return typeof raw === "string" && /^\d{1,9}$/.test(raw) ? Number(raw) : NaN;
+};
+
+const PatchBookingBody = z.object({
+  start: WALL_TIME.optional(),
+  serviceId: z.number().int().positive().optional(),
+  status: z.enum(BOOKING_STATUSES as [BookingStatus, ...BookingStatus[]]).optional(),
+  notes: z.string().max(1000).optional(),
+  customerName: z.string().trim().max(120).nullable().optional(),
+  partySize: z.number().int().min(1).max(100).optional(),
+}).strict();
+
+businessRouter.patch("/bookings/:id", (req: Request, res: Response) => {
+  const input = body(PatchBookingBody, req, res);
+  if (!input) return;
+  const patch: BookingPatch = {};
+  if (input.start !== undefined) patch.start = input.start;
+  if (input.serviceId !== undefined) patch.serviceId = input.serviceId;
+  if (input.status !== undefined) patch.status = input.status;
+  if (input.notes !== undefined) patch.notes = input.notes;
+  if (input.customerName !== undefined) patch.customerName = input.customerName;
+  if (input.partySize !== undefined) patch.partySize = input.partySize;
+
+  const result = updateBooking(businessOf(req), bookingId(req), patch, "owner");
+  if (!result.ok) return bookingFailure(res, result.reason);
+  record(req, "booking_updated", String(result.booking.id), { fields: Object.keys(patch) });
+  res.json({ booking: result.booking });
+});
+
+const CancelBody = z.object({
+  /** Tell the customer on WhatsApp. Only possible inside the 24h window until templates exist. */
+  notify: z.boolean().default(false),
+  message: z.string().trim().max(1000).default(""),
+}).strict();
+
+businessRouter.post("/bookings/:id/cancel", async (req: Request, res: Response) => {
+  const input = body(CancelBody, req, res);
+  if (!input) return;
+  const bid = businessOf(req);
+  const result = updateBooking(bid, bookingId(req), { status: "cancelled" }, "owner");
+  if (!result.ok) return bookingFailure(res, result.reason);
+  const booking = result.booking;
+  record(req, "booking_cancelled", String(booking.id), { notify: input.notify });
+
+  // The cancellation stands whatever happens to the message: a failed notice
+  // is reported back so the owner can tell the customer another way.
+  let notified = false;
+  let notifyError: string | null = null;
+  if (input.notify) {
+    if (!booking.waId) notifyError = "no_whatsapp";
+    else if (!input.message) notifyError = "empty_message";
+    else if (!getBusiness(bid)?.hasCredentials) notifyError = "not_connected";
+    else if (!windowState(bid, booking.waId).open) notifyError = "window_closed";
+    else {
+      try {
+        const ids = await sendText(bid, booking.waId, input.message, { sender: "human", userId: getAuth(req).user.id });
+        notified = ids.length > 0;
+        if (!notified) notifyError = "window_closed";
+      } catch (err) {
+        log.error("cancel_notice_failed", { businessId: bid, err: String(err) });
+        notifyError = err instanceof NotConnectedError ? "not_connected" : "send_failed";
+      }
+    }
+  }
+  res.json({ booking, notified, notifyError });
+});

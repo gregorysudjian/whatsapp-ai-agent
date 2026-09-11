@@ -24,6 +24,7 @@ import {
 } from "./db.ts";
 import { listConversations, listMessages, listEvents, stats } from "./queries.ts";
 import { createBooking } from "./bookings.ts";
+import { createService } from "./services.ts";
 import { subscribe, type AgentEvent } from "../core/events.ts";
 
 const graph = new MockGraph();
@@ -259,10 +260,23 @@ test("the same hour can be booked at both clients", () => {
   const pad = (n: number) => String(n).padStart(2, "0");
   const slot = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T10:00`;
 
-  assert.equal(createBooking(A, "15145550010", "Ana", slot, 1).ok, true);
-  assert.equal(createBooking(B, "15145550011", "Ben", slot, 1).ok, true,
+  const svcA = createService(A, { name: "Consult", durationMin: 60, priceCents: null, currency: "CAD" }).id;
+  const svcB = createService(B, { name: "Session", durationMin: 60, priceCents: null, currency: "CAD" }).id;
+  const book = (bid: BusinessId, waId: string, serviceId: number) =>
+    createBooking(bid, { waId, customerName: "X", serviceId, start: slot, source: "agent" });
+
+  assert.equal(book(A, "15145550010", svcA).ok, true);
+  assert.equal(book(B, "15145550011", svcB).ok, true,
     "a slot was unique across every client before multi-tenancy");
-  assert.deepEqual(createBooking(A, "15145550012", "Late", slot, 1), { ok: false, reason: "taken" });
+  assert.deepEqual(book(A, "15145550012", svcA), { ok: false, reason: "taken" });
+  assert.deepEqual(book(A, "15145550013", svcB), { ok: false, reason: "no_service" },
+    "a service id belongs to one client: A cannot book B's service");
+
+  // And in the other order: whichever client books first, the other is unaffected.
+  const later = slot.replace("T10:00", "T14:00");
+  assert.equal(createBooking(B, { waId: "15145550014", customerName: "X", serviceId: svcB, start: later, source: "agent" }).ok, true);
+  assert.equal(createBooking(A, { waId: "15145550015", customerName: "X", serviceId: svcA, start: later, source: "agent" }).ok, true,
+    "B's booking must not block A either");
 });
 
 test("stats are counted per client", () => {
