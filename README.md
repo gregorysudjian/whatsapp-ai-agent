@@ -5,17 +5,15 @@ A customer-support agent on WhatsApp, built on the **Meta WhatsApp Cloud API** w
 
 ## Status
 
-| Phase | What | State |
+| Area | What | State |
 |---|---|---|
-| 1 | Scaffold, config, logging, health | done |
-| 2 | Webhook verify + signature + echo reply | done |
-| 2.5 | SQLite store + live ops dashboard | done |
-| D1 | Multi-business foundation: tenancy, encrypted credentials, per-client webhooks | done |
-| 3 | Claude in the loop, conversation memory (SQLite) | done |
-| 4 | Business tools (lookup, booking, human handoff) | done |
-| 5 | Retries, rate limits, 24h guard, kill switch | done |
-| 5.3 | Media/voice | todo |
-| 6 | Deploy, monitoring | todo |
+| Agent | Webhook, signatures, Claude with tools, memory, retries, 24h guard, kill switch | done |
+| Multi-business | Tenancy, encrypted credentials, per-client webhooks | done |
+| Dashboard | Logins and roles, overview with charts, inbox with human takeover, bookings, contacts + CSV, agent settings, monthly PDF, admin panel | done |
+| Bookings | Services and durations, no double-booking, customers manage their own on WhatsApp, reminders with Confirm/Cancel, Google Calendar sync | done |
+| Privacy (Law 25) | Retention, erasure, AI notice, audit log | done |
+| Deploy | Dockerfile and a guide (docs/deploy.md) | ready, not deployed |
+| Media / voice | Images and voice notes | todo |
 
 ## Setup
 
@@ -50,7 +48,7 @@ npm run dev
 Meta needs a public HTTPS URL. No signup needed with cloudflared:
 
 ```bash
-cloudflared tunnel --url http://localhost:3000
+cloudflared tunnel --url http://localhost:3001
 ```
 
 Then in **WhatsApp > Configuration > Webhook**:
@@ -59,7 +57,7 @@ Then in **WhatsApp > Configuration > Webhook**:
 - Subscribe to the **`messages`** field. (Missing this is the #1 reason a
   correctly-built bot receives nothing.)
 
-Message the test number from your phone. You should get `echo: <your text>` back.
+Message the test number from your phone: the agent answers (with `ANTHROPIC_AUTH_TOKEN` set; without it, a fallback sentence), and the conversation appears in the dashboard's Inbox.
 
 ## Tests
 
@@ -137,7 +135,8 @@ to the channel.
 |---|---|
 | `agent/claude.ts` | The Messages API call, error classification, fallbacks |
 | `agent/memory.ts` | Rebuilds conversation history from the store |
-| `agent/persona.ts` | Business facts and the system prompt |
+| `agent/prompt.ts` | Builds the system prompt from each business's settings (byte-stable, cached) |
+| `agent/persona.ts` | Seed values for the default business only |
 | `agent/tools.ts` | Tool schemas and their executors |
 
 **Credentials.** The client is constructed with no arguments so the SDK's own
@@ -190,13 +189,18 @@ WhatsApp --webhook--> src/whatsapp/webhook.ts   verify signature, ack 200 fast
                               |
                       src/core/dedupe.ts        drop Meta's retries
                               |
-                      src/core/handler.ts       <- Claude goes here (phase 3)
+                      src/core/handler.ts       buttons, AI notice, Claude + tools
                               |
-                      src/whatsapp/client.ts    send, mark read, download media
+                      src/whatsapp/client.ts    send text/templates, mark read, media
                               |
-                      src/store/db.ts           history + events (node:sqlite)
+                      src/store/*               node:sqlite, every row scoped by business
                               |
-                      src/dashboard/router.ts   /dashboard, /api, SSE stream
+                      src/api/*                 /api/b/:bid (owner), /api/admin (super admin), SSE
+                              |
+                      web/                      React dashboard, served at /
+
+   alongside: src/core/reminders.ts (template reminders), src/calendar/google.ts
+   (Google Calendar), src/core/privacy-jobs.ts (retention), src/reports/ (PDF)
 ```
 
 The agent layer never sees WhatsApp payload shapes - `webhook.ts` normalizes to
@@ -204,12 +208,13 @@ The agent layer never sees WhatsApp payload shapes - `webhook.ts` normalizes to
 
 ## Operating it
 
-- **Kill switch** - the `agent: on/off` button on the dashboard. Messages are
-  still received, stored and displayed while it is off; only the reply is
-  withheld, so turning it off never loses a question.
-- **Handoff** - `escalate_to_human` pauses that one conversation and floats it
-  to the top of the dashboard. "Resume agent" clears it.
-- **Spend** - tracked per reply and totalled on the dashboard.
+- **Kill switch** - **Pause agent** on the Overview. Messages are still received,
+  stored and shown while it is off; replies and reminders are withheld, so turning
+  it off never loses a question.
+- **Handoff** - `escalate_to_human` marks the conversation "Needs a person" at the
+  top of the Inbox; **Take over** / **Hand back to agent** move it between a person
+  and the agent.
+- **Spend** - tracked per reply; per client per month under Admin -> Usage & billing.
 
 ## Things that will bite you
 
