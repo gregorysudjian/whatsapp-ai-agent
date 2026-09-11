@@ -572,5 +572,8 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D9, what counts:** reply time = from the first unanswered customer message to the next
   reply by the agent or a person (automatic notices don't count), capped at 24h (beyond that it
   is "unanswered"). "Bookings made" is by creation day; "appointments" by start day.
+- **D10, phone numbers in the CSV are digits only** (no "+"): a leading "+" would read as a
+  formula and need the apostrophe escape. The export is audited (row count, search), and is
+  `Cache-Control: no-store`.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

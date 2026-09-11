@@ -12,7 +12,8 @@ import { z } from "zod";
 import { businessOf, clientIp, getAuth } from "../auth/middleware.ts";
 import { resolveSession } from "../auth/sessions.ts";
 import { getBusiness, updateBusinessProfile } from "../store/businesses.ts";
-import { listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
+import { listContacts, listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
+import { toCsv } from "./csv.ts";
 import {
   agentEnabled, contactExists, handBack, isPaused, setAgentEnabled, takeOver, windowState,
 } from "../store/db.ts";
@@ -489,4 +490,51 @@ businessRouter.get("/overview", (req: Request, res: Response) => {
     return;
   }
   res.json({ ...overview(bid, from, to), today, agentEnabled: agentEnabled(bid), business: profile(bid) });
+});
+
+// --- contacts -------------------------------------------------------------------
+
+const ContactsQuery = z.object({
+  q: z.string().max(100).default(""),
+  sort: z.enum(["recent", "name", "first_seen", "messages"]).default("recent"),
+});
+
+businessRouter.get("/contacts", (req: Request, res: Response) => {
+  const input = query(ContactsQuery, req, res);
+  if (!input) return;
+  res.json({ contacts: listContacts(businessOf(req), { q: input.q, sort: input.sort, limit: 2000 }) });
+});
+
+const CSV_HEADERS: Record<"en" | "fr", string[]> = {
+  en: ["Name", "WhatsApp number", "First contact", "Last message", "Messages received", "Messages sent", "Bookings", "Handled by"],
+  fr: ["Nom", "Numéro WhatsApp", "Premier contact", "Dernier message", "Messages reçus", "Messages envoyés", "Rendez-vous", "Pris en charge par"],
+};
+
+/**
+ * Every contact of this business as CSV. An export of personal information
+ * leaves the system, so it is audited like a write.
+ */
+businessRouter.get("/contacts.csv", (req: Request, res: Response) => {
+  const input = query(ContactsQuery.extend({ lang: z.enum(["en", "fr"]).optional() }), req, res);
+  if (!input) return;
+  const bid = businessOf(req);
+  const business = getBusiness(bid)!;
+  const lang = input.lang ?? business.defaultLanguage;
+  // Times in the business's zone, in a shape every spreadsheet parses.
+  const when = (ms: number | null) => (ms ? wallClockNow(business.timezone, ms).replace("T", " ") : "");
+  const contacts = listContacts(bid, { q: input.q, sort: input.sort, limit: 100_000 });
+  const csv = toCsv(CSV_HEADERS[lang], contacts.map((c) => [
+    c.name ?? "",
+    // Digits only: a leading "+" would read as a formula and need escaping.
+    c.waId,
+    when(c.firstSeen), when(c.lastMessageTs), c.inbound, c.outbound, c.bookings,
+    c.control === "human" ? (lang === "fr" ? "Une personne" : "A person") : (lang === "fr" ? "L'agent" : "The agent"),
+  ]));
+  record(req, "contacts_exported", undefined, { rows: contacts.length, q: input.q || undefined });
+  const date = wallClockNow(business.timezone).slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="contacts-${date}.csv"`);
+  // Personal information: never cached by a browser or a proxy.
+  res.setHeader("Cache-Control", "no-store");
+  res.send(csv);
 });

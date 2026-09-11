@@ -298,3 +298,60 @@ function num(v: unknown): number | null {
 function str(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
+
+// --- contacts -----------------------------------------------------------------
+
+export interface ContactRow {
+  waId: string;
+  name: string | null;
+  firstSeen: number;
+  lastMessageTs: number | null;
+  inbound: number;
+  outbound: number;
+  /** Bookings not cancelled, past and future. */
+  bookings: number;
+  control: "ai" | "human";
+  needsHuman: boolean;
+}
+
+export type ContactSort = "recent" | "name" | "first_seen" | "messages";
+
+const CONTACT_ORDER: Record<ContactSort, string> = {
+  recent: "COALESCE(c.last_message_ts, 0) DESC",
+  name: "COALESCE(c.name, c.wa_id) COLLATE NOCASE ASC",
+  first_seen: "c.first_seen DESC",
+  messages: "(c.inbound_count + c.outbound_count) DESC",
+};
+
+// One prepared statement per sort order: ORDER BY cannot be a bound parameter,
+// and the order comes from this fixed map, never from the request.
+const contactsStmts = Object.fromEntries(
+  (Object.keys(CONTACT_ORDER) as ContactSort[]).map((sort) => [sort, db.prepare(`
+    SELECT c.wa_id, c.name, c.first_seen, c.last_message_ts, c.inbound_count, c.outbound_count,
+           c.control, c.needs_human,
+           (SELECT COUNT(*) FROM bookings b
+             WHERE b.business_id = c.business_id AND b.wa_id = c.wa_id AND b.status != 'cancelled') AS bookings
+    FROM contacts c
+    WHERE c.business_id = ?1
+      AND (?2 = '' OR c.name LIKE ?3 ESCAPE '!' OR c.wa_id LIKE ?3 ESCAPE '!')
+    ORDER BY ${CONTACT_ORDER[sort]}, c.wa_id
+    LIMIT ?4
+  `)]),
+) as Record<ContactSort, ReturnType<typeof db.prepare>>;
+
+export function listContacts(businessId: BusinessId, opts: { q?: string; sort?: ContactSort; limit?: number } = {}): ContactRow[] {
+  const q = (opts.q ?? "").trim().slice(0, 100);
+  return contactsStmts[opts.sort ?? "recent"]
+    .all(businessId, q, likeContains(q), Math.min(opts.limit ?? 1000, 100_000))
+    .map((r) => ({
+      waId: String(r["wa_id"]),
+      name: str(r["name"]),
+      firstSeen: num(r["first_seen"]) ?? 0,
+      lastMessageTs: num(r["last_message_ts"]),
+      inbound: num(r["inbound_count"]) ?? 0,
+      outbound: num(r["outbound_count"]) ?? 0,
+      bookings: num(r["bookings"]) ?? 0,
+      control: r["control"] === "human" ? "human" : "ai",
+      needsHuman: Number(r["needs_human"] ?? 0) === 1,
+    }));
+}

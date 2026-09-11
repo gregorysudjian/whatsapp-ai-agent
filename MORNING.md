@@ -35,7 +35,7 @@ Then delete that file.
 | D6 | Bookings v2 and bookings page | ✅ done — services and durations, statuses, overlap rule, customers manage their own, week/list page |
 | D7 | Reminders and confirmations | ✅ done — template reminders with Confirm/Cancel buttons; off until you submit the template and switch it on |
 | D9 | Overview stats and charts | ✅ done — six headline numbers with change vs the previous period, three charts, a daily table |
-| D10 | Contacts and CSV export | not started |
+| D10 | Contacts and CSV export | ✅ done — searchable, sortable list; a spreadsheet-safe CSV export, audited |
 | D12 | Admin panel | not started |
 | D11 | Monthly PDF report | not started |
 | D8 | Google Calendar | not started |
@@ -175,6 +175,16 @@ time; a booking made after its reminder time (e.g. booked last-minute) gets none
 
 It will look empty on your real data until customers write in — the screenshots were taken on
 a month of made-up demo traffic in a throwaway database.
+
+### D10 — Contacts
+**Contacts** in the sidebar: everyone who has written to Ninja Co, with first contact, last
+message, messages in/out, bookings and who's handling them. Search by name or number; click a
+column title to sort; click a person to open their conversation.
+
+**Export CSV** downloads the list (the current search and sort, headers in the dashboard's
+language). It opens cleanly in Excel — accents and Arabic intact — and a customer who named
+themselves `=HYPERLINK(...)` on WhatsApp can't run a formula on your computer (such cells are
+defused). Every export is recorded in the audit log.
 
 ---
 

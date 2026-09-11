@@ -13,6 +13,7 @@ export function extraPages(bid: number, ownerCookie: string, _adminCookie: strin
     { name: "settings-preview", path: `/b/${bid}/settings?tab=preview`, cookie: ownerCookie, fullPage: true },
     { name: "settings-reminders", path: `/b/${bid}/settings?tab=reminders`, cookie: ownerCookie, fullPage: true },
     { name: "inbox", path: `/b/${bid}/inbox`, cookie: ownerCookie },
+    { name: "contacts", path: `/b/${bid}/contacts`, cookie: ownerCookie },
     { name: "overview-full", path: `/b/${bid}/overview`, cookie: ownerCookie, fullPage: true },
     { name: "bookings", path: `/b/${bid}/bookings`, cookie: ownerCookie },
     { name: "bookings-list", path: `/b/${bid}/bookings?view=list`, cookie: ownerCookie },
