@@ -4,13 +4,12 @@
  * an LLM behind it, costs twice.
  *
  * Backed by the messages table rather than a Map: an in-memory set forgets
- * everything on restart, and Meta's retries outlive a restart easily. The
- * message id is the primary key there, so "have we seen this?" is just a
- * lookup - no second source of truth to keep in sync.
+ * everything on restart, and Meta's retries outlive a restart easily. Scoped
+ * by business, like every other read.
  */
 
-import { hasMessage } from "../store/db.ts";
+import { hasMessage, type BusinessId } from "../store/db.ts";
 
-export function isDuplicate(messageId: string): boolean {
-  return hasMessage(messageId);
+export function isDuplicate(businessId: BusinessId, messageId: string): boolean {
+  return hasMessage(businessId, messageId);
 }

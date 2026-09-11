@@ -6,6 +6,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { listMessages } from "../store/queries.ts";
+import type { BusinessId } from "../store/db.ts";
 
 /** How many past turns to replay. Cost scales with this on every message. */
 export const HISTORY_LIMIT = 20;
@@ -19,10 +20,11 @@ export const HISTORY_LIMIT = 20;
  * normalised to an empty string.
  */
 export function buildHistory(
+  businessId: BusinessId,
   waId: string,
   limit = HISTORY_LIMIT,
 ): Anthropic.MessageParam[] {
-  const rows = listMessages(waId, 500).slice(-limit);
+  const rows = listMessages(businessId, waId, 500).slice(-limit);
 
   const turns: Anthropic.MessageParam[] = [];
   for (const row of rows) {

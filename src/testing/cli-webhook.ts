@@ -3,13 +3,15 @@
  *
  *   npm run fake-webhook -- "are you open today?"
  *   npm run fake-webhook -- "hello" --from 15145551234 --port 3001
+ *   npm run fake-webhook -- "bonjour" --business 2      (as client #2)
  *
  * Signed with the real WHATSAPP_APP_SECRET, so the signature check runs for
  * real. Lets you hold a whole conversation with the bot without a phone, a
  * tunnel, or Meta ever being involved.
  */
 
-import { textMessagePayload, deliver } from "./webhook.ts";
+import { textMessagePayload, deliver, targetFor, defaultTarget } from "./webhook.ts";
+import { seedDefaultBusiness, getBusiness } from "../store/businesses.ts";
 
 function flag(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -27,10 +29,20 @@ const from = flag("from", "15550001111");
 const port = flag("port", String(process.env["PORT"] ?? 3000));
 const baseUrl = `http://localhost:${port}`;
 
-const payload = textMessagePayload(text, { from, name: flag("name", "Test User") });
-const result = await deliver(baseUrl, payload);
+seedDefaultBusiness();
 
-console.log(`-> POST ${baseUrl}/webhook  (from ${from})`);
+// --business <id> signs and addresses the message as that client's Meta app
+// would; without it, the legacy /webhook route and the default business.
+const businessId = flag("business", "");
+const target = businessId ? targetFor(Number(businessId)) : defaultTarget();
+const label = businessId ? getBusiness(Number(businessId))?.name : "default business";
+
+const payload = textMessagePayload(text, {
+  from, name: flag("name", "Test User"), phoneNumberId: target.phoneNumberId,
+});
+const result = await deliver(baseUrl, payload, target);
+
+console.log(`-> POST ${baseUrl}${target.path}  (from ${from}, to ${label})`);
 console.log(`<- ${result.status} ${result.text}`);
 console.log(
   result.status === 200

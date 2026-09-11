@@ -13,6 +13,8 @@ import type { AddressInfo } from "node:net";
 export interface RecordedRequest {
   path: string;
   body: Record<string, unknown>;
+  /** The bearer token presented - lets tests prove which client's token was used. */
+  authorization: string;
   receivedAt: number;
 }
 
@@ -71,7 +73,12 @@ export class MockGraph {
         } catch {
           // Leave it empty - a malformed body is itself worth asserting on.
         }
-        this.requests.push({ path: req.url ?? "", body, receivedAt: Date.now() });
+        this.requests.push({
+          path: req.url ?? "",
+          body,
+          authorization: String(req.headers["authorization"] ?? ""),
+          receivedAt: Date.now(),
+        });
 
         const next = this.script.shift();
         if (next && next.status >= 300) {

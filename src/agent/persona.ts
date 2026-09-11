@@ -1,10 +1,10 @@
 /**
  * Who the agent is, and what it may say.
  *
- * EDIT THE BLOCK BELOW. Everything marked <...> is a placeholder; the agent
- * works without editing it, but it will politely refuse to state hours,
- * prices or an address it has not been given, which is the correct behaviour
- * for a support bot and a poor experience for your customers.
+ * Facts are stored per business (see store/businesses.ts) and passed in. The
+ * BUSINESS constant below is no longer read at runtime: it only seeds the
+ * default business on first boot after the multi-tenancy migration. From
+ * step 4, owners edit these on the dashboard's settings page.
  */
 
 export interface BusinessFacts {
@@ -18,11 +18,11 @@ export interface BusinessFacts {
 }
 
 export const BUSINESS: BusinessFacts = {
-  name: "<YOUR BUSINESS NAME>",
-  what: "<one line: what you sell or do>",
-  hours: "<e.g. Mon-Fri 9am-6pm, Sat 10am-4pm, closed Sunday>",
-  address: "<street address, or 'online only'>",
-  contact: "<phone or email for humans>",
+  name: "Ninja Co",
+  what: "Robotics and coding tutoring",
+  hours: "Monday to Friday, 8am to 3pm. Closed Saturday and Sunday.",
+  address: "Beirut, Lebanon",
+  contact: "Not provided yet - offer to pass the question to a human",
   neverDo: [
     "promise a refund, discount, or delivery date",
     "quote a price that is not listed here",
@@ -30,17 +30,39 @@ export const BUSINESS: BusinessFacts = {
   ],
 };
 
-/** True once the placeholders have actually been replaced. */
-export const personaIsConfigured = (): boolean =>
-  !BUSINESS.name.startsWith("<");
+/**
+ * The same hours as BUSINESS.hours above, in the form bookings can check.
+ * Duplicated by necessity until step 4, whose settings page generates the
+ * prompt's hours text FROM the schedule, so the two can no longer disagree.
+ * Keys are JS weekdays: 0 = Sunday ... 6 = Saturday. Absent = closed.
+ */
+export const SEED_SCHEDULE: Record<string, { open: string; close: string }> = {
+  "1": { open: "08:00", close: "15:00" },
+  "2": { open: "08:00", close: "15:00" },
+  "3": { open: "08:00", close: "15:00" },
+  "4": { open: "08:00", close: "15:00" },
+  "5": { open: "08:00", close: "15:00" },
+};
+
+/** Where the business is. Bookings and "is this slot in the past" use it. */
+export const SEED_TIMEZONE = "Asia/Beirut";
+
+/** True once an owner has told the agent something real about the business. */
+export function isConfigured(facts: BusinessFacts): boolean {
+  return !facts.name.startsWith("<") && !facts.what.startsWith("<") && !facts.hours.startsWith("<");
+}
 
 /**
  * Byte-stable on purpose: this string is the cached prefix of every request.
  * A timestamp, a UUID, or anything else that varies per call would silently
  * invalidate the cache and quietly multiply cost.
+ *
+ * `business` is required - no default. A default would mean any call site
+ * that forgot to pass one quietly gave every client's customers the same
+ * business's hours and address.
  */
-export function buildSystemPrompt(business: BusinessFacts = BUSINESS): string {
-  const configured = !business.name.startsWith("<");
+export function buildSystemPrompt(business: BusinessFacts): string {
+  const configured = isConfigured(business);
 
   const facts = configured
     ? `About the business:
@@ -50,9 +72,10 @@ export function buildSystemPrompt(business: BusinessFacts = BUSINESS): string {
 - Address: ${business.address}
 - Human contact: ${business.contact}`
     : `About the business:
-You have NOT been given this business's details yet. You do not know its name,
-hours, address, prices, or stock. Say so plainly when asked and offer to pass
-the question to a human. Do not guess and do not invent placeholder details.`;
+You represent ${business.name.startsWith("<") ? "this business" : business.name}, but you have NOT been
+given its details yet. You do not know its hours, address, prices, or stock.
+Say so plainly when asked and offer to pass the question to a human. Do not
+guess and do not invent placeholder details.`;
 
   return `You are a customer support agent replying over WhatsApp.
 

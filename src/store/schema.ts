@@ -1,0 +1,275 @@
+/**
+ * Numbered migrations, tracked in PRAGMA user_version.
+ *
+ * Every database - fresh or years old - walks the same path from 0 upward, so
+ * there is exactly one way a schema comes to exist. Each migration runs in a
+ * transaction: it lands completely or not at all, and a failure leaves the
+ * previous version intact rather than a half-rebuilt table.
+ */
+
+import crypto from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+
+type Migration = (db: DatabaseSync) => void;
+
+/** Additive column changes, checked with PRAGMA so a real failure surfaces. */
+function addColumns(db: DatabaseSync, table: string, columns: Record<string, string>): void {
+  const existing = new Set(
+    db.prepare(`PRAGMA table_info(${table})`).all().map((r) => String(r["name"])),
+  );
+  for (const [name, decl] of Object.entries(columns)) {
+    if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${decl}`);
+  }
+}
+
+function tableExists(db: DatabaseSync, name: string): boolean {
+  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?`).get(name) !== undefined;
+}
+
+function rowCount(db: DatabaseSync, table: string): number {
+  return Number((db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as Record<string, unknown>)["n"]);
+}
+
+const MIGRATIONS: Migration[] = [
+  /**
+   * 1 - the single-business schema as it existed before multi-tenancy.
+   * Idempotent, so a pre-migration database (user_version 0 but tables
+   * present) passes through it unchanged and a fresh one gets created.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY, wa_id TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+        type TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', sender_name TEXT,
+        ts INTEGER NOT NULL, status TEXT, error TEXT, raw TEXT
+      );
+      CREATE TABLE IF NOT EXISTS contacts (
+        wa_id TEXT PRIMARY KEY, name TEXT, first_seen INTEGER NOT NULL,
+        last_inbound_ts INTEGER, last_message_ts INTEGER,
+        inbound_count INTEGER NOT NULL DEFAULT 0, outbound_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+        level TEXT NOT NULL, name TEXT NOT NULL, detail TEXT
+      );
+      CREATE TABLE IF NOT EXISTS bookings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, wa_id TEXT NOT NULL, name TEXT,
+        slot TEXT NOT NULL UNIQUE, party_size INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    addColumns(db, "contacts", {
+      paused: "INTEGER NOT NULL DEFAULT 0",
+      needs_human: "INTEGER NOT NULL DEFAULT 0",
+      handoff_reason: "TEXT",
+    });
+    addColumns(db, "messages", {
+      input_tokens: "INTEGER", output_tokens: "INTEGER",
+      cache_read_tokens: "INTEGER", latency_ms: "INTEGER",
+    });
+  },
+
+  /**
+   * 2 - multi-tenancy.
+   *
+   * Every client-owned table gains business_id, and every existing row is
+   * assigned to business #1 so a single-business install carries its history
+   * over intact.
+   *
+   * business_id is NOT NULL with NO default. A default would be a trap: any
+   * future insert that forgot to pass it would silently file one client's data
+   * under another's. Without one, that insert fails loudly instead. SQLite
+   * cannot add such a column in place, so the affected tables are rebuilt.
+   */
+  (db) => {
+    const now = Date.now();
+
+    db.exec(`
+      CREATE TABLE businesses (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        public_id              TEXT NOT NULL UNIQUE,
+        name                   TEXT NOT NULL,
+        status                 TEXT NOT NULL DEFAULT 'active'
+                               CHECK (status IN ('active','inactive')),
+        timezone               TEXT NOT NULL DEFAULT 'America/Toronto',
+        default_language       TEXT NOT NULL DEFAULT 'en'
+                               CHECK (default_language IN ('en','fr')),
+        wa_phone_number_id     TEXT UNIQUE,
+        wa_business_account_id TEXT,
+        wa_access_token_enc    TEXT,
+        wa_app_secret_enc      TEXT,
+        wa_verify_token_enc    TEXT,
+        graph_version          TEXT NOT NULL DEFAULT 'v23.0',
+        created_at             INTEGER NOT NULL,
+        updated_at             INTEGER NOT NULL
+      );
+
+      -- facts: what the agent may say (feeds the system prompt).
+      -- schedule: when it may book, per weekday. Structured, because a
+      -- booking check cannot parse "Monday to Friday, 8am to 3pm".
+      CREATE TABLE business_settings (
+        business_id INTEGER PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+        facts       TEXT NOT NULL,
+        schedule    TEXT NOT NULL,
+        updated_at  INTEGER NOT NULL
+      );
+    `);
+
+    // Unguessable, because it appears in the client's webhook URL.
+    db.prepare(`
+      INSERT INTO businesses (id, public_id, name, created_at, updated_at)
+      VALUES (1, ?, 'Default business', ?, ?)
+    `).run(crypto.randomBytes(9).toString("base64url"), now, now);
+
+    // messages - rowid order IS conversation order (see queries.ts), so the
+    // copy must preserve it; a rebuild without ORDER BY rowid would scramble
+    // every transcript's history.
+    db.exec(`
+      CREATE TABLE messages_v2 (
+        id                TEXT PRIMARY KEY,
+        business_id       INTEGER NOT NULL REFERENCES businesses(id),
+        wa_id             TEXT NOT NULL,
+        direction         TEXT NOT NULL CHECK (direction IN ('in','out')),
+        type              TEXT NOT NULL,
+        text              TEXT NOT NULL DEFAULT '',
+        sender_name       TEXT,
+        ts                INTEGER NOT NULL,
+        status            TEXT,
+        error             TEXT,
+        raw               TEXT,
+        input_tokens      INTEGER,
+        output_tokens     INTEGER,
+        cache_read_tokens INTEGER,
+        latency_ms        INTEGER
+      );
+      INSERT INTO messages_v2 (id, business_id, wa_id, direction, type, text, sender_name,
+                               ts, status, error, raw, input_tokens, output_tokens,
+                               cache_read_tokens, latency_ms)
+        SELECT id, 1, wa_id, direction, type, text, sender_name, ts, status, error, raw,
+               input_tokens, output_tokens, cache_read_tokens, latency_ms
+        FROM messages ORDER BY rowid;
+      DROP TABLE messages;
+      ALTER TABLE messages_v2 RENAME TO messages;
+      CREATE INDEX messages_by_convo    ON messages (business_id, wa_id);
+      CREATE INDEX messages_by_business ON messages (business_id, ts DESC);
+    `);
+
+    // contacts - keyed per business: one customer texting two of your
+    // clients is two separate relationships, not one shared record.
+    db.exec(`
+      CREATE TABLE contacts_v2 (
+        business_id     INTEGER NOT NULL REFERENCES businesses(id),
+        wa_id           TEXT NOT NULL,
+        name            TEXT,
+        first_seen      INTEGER NOT NULL,
+        last_inbound_ts INTEGER,
+        last_message_ts INTEGER,
+        inbound_count   INTEGER NOT NULL DEFAULT 0,
+        outbound_count  INTEGER NOT NULL DEFAULT 0,
+        paused          INTEGER NOT NULL DEFAULT 0,
+        needs_human     INTEGER NOT NULL DEFAULT 0,
+        handoff_reason  TEXT,
+        PRIMARY KEY (business_id, wa_id)
+      );
+      INSERT INTO contacts_v2
+        SELECT 1, wa_id, name, first_seen, last_inbound_ts, last_message_ts,
+               inbound_count, outbound_count, paused, needs_human, handoff_reason
+        FROM contacts;
+      DROP TABLE contacts;
+      ALTER TABLE contacts_v2 RENAME TO contacts;
+    `);
+
+    // settings - the kill switch was global; it is per client now.
+    db.exec(`
+      CREATE TABLE settings_v2 (
+        business_id INTEGER NOT NULL REFERENCES businesses(id),
+        key         TEXT NOT NULL,
+        value       TEXT NOT NULL,
+        PRIMARY KEY (business_id, key)
+      );
+      INSERT INTO settings_v2 SELECT 1, key, value FROM settings;
+      DROP TABLE settings;
+      ALTER TABLE settings_v2 RENAME TO settings;
+    `);
+
+    // events - business_id is nullable here, and only here: some events
+    // (a bad signature on an unknown URL) happen before any business is known.
+    db.exec(`
+      CREATE TABLE events_v2 (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_id INTEGER REFERENCES businesses(id),
+        ts          INTEGER NOT NULL,
+        level       TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        detail      TEXT
+      );
+      INSERT INTO events_v2 (business_id, ts, level, name, detail)
+        SELECT 1, ts, level, name, detail FROM events ORDER BY id;
+      DROP TABLE events;
+      ALTER TABLE events_v2 RENAME TO events;
+      CREATE INDEX events_by_business ON events (business_id, ts DESC);
+    `);
+
+    // bookings - a slot was unique across everyone, so two clients could not
+    // both take 10:00. Unique per business now. (Reworked fully in step 6.)
+    db.exec(`
+      CREATE TABLE bookings_v2 (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_id INTEGER NOT NULL REFERENCES businesses(id),
+        wa_id       TEXT NOT NULL,
+        name        TEXT,
+        slot        TEXT NOT NULL,
+        party_size  INTEGER NOT NULL DEFAULT 1,
+        created_at  INTEGER NOT NULL,
+        UNIQUE (business_id, slot)
+      );
+      INSERT INTO bookings_v2 (business_id, wa_id, name, slot, party_size, created_at)
+        SELECT 1, wa_id, name, slot, party_size, created_at FROM bookings ORDER BY id;
+      DROP TABLE bookings;
+      ALTER TABLE bookings_v2 RENAME TO bookings;
+    `);
+
+    // orders - out of scope by decision. Dropped only when empty; any real
+    // rows are set aside rather than destroyed.
+    if (tableExists(db, "orders")) {
+      if (rowCount(db, "orders") === 0) db.exec(`DROP TABLE orders`);
+      else db.exec(`ALTER TABLE orders RENAME TO orders_legacy`);
+    }
+  },
+];
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
+/** Brings `db` up to the current version. Returns the versions applied. */
+export function migrate(db: DatabaseSync): number[] {
+  const current = Number(
+    (db.prepare("PRAGMA user_version").get() as Record<string, unknown>)["user_version"],
+  );
+  const applied: number[] = [];
+
+  // Off while tables are rebuilt (SQLite's documented procedure), back on
+  // afterwards so business_id references are enforced for every write.
+  db.exec("PRAGMA foreign_keys = OFF");
+
+  for (let version = current + 1; version <= MIGRATIONS.length; version++) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      MIGRATIONS[version - 1]!(db);
+      db.exec(`PRAGMA user_version = ${version}`);
+      db.exec("COMMIT");
+      applied.push(version);
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw new Error(`Migration ${version} failed and was rolled back: ${String(err)}`);
+    }
+  }
+
+  db.exec("PRAGMA foreign_keys = ON");
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length > 0) {
+    throw new Error(`Foreign key violations after migration: ${JSON.stringify(violations)}`);
+  }
+  return applied;
+}

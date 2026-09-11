@@ -10,6 +10,7 @@ A customer-support agent on WhatsApp, built on the **Meta WhatsApp Cloud API** w
 | 1 | Scaffold, config, logging, health | done |
 | 2 | Webhook verify + signature + echo reply | done |
 | 2.5 | SQLite store + live ops dashboard | done |
+| D1 | Multi-business foundation: tenancy, encrypted credentials, per-client webhooks | done |
 | 3 | Claude in the loop, conversation memory (SQLite) | done |
 | 4 | Business tools (lookup, booking, human handoff) | done |
 | 5 | Retries, rate limits, 24h guard, kill switch | done |
@@ -89,6 +90,42 @@ npm run fake-webhook -- "and tomorrow?" --from 15145551234
 **Caveat:** the suite runs under Node's strip-only TypeScript mode, which
 rejects `enum`, `namespace`, decorators, and constructor parameter properties.
 None are used; don't introduce them.
+
+## Multiple businesses
+
+One server runs the agent for many clients. Each business has its own
+WhatsApp number, its own Meta credentials, its own settings, and its own data -
+and nothing of one is visible through another.
+
+**Every client gets its own webhook URL:** `/webhook/b/<publicId>`. The
+server checks the signature with *that client's* app secret, and then checks
+that the payload is for that client's phone number. The bare `/webhook` still
+works and maps to business #1, so an existing Meta setup keeps working.
+
+```bash
+npm run business -- list                       # clients, status, webhook URLs
+npm run business -- add "Clinique X" --language fr --timezone America/Toronto
+npm run business -- connect 2                  # prompts for the Meta credentials
+npm run business -- show 2                     # secrets shown redacted, never in full
+npm run business -- deactivate 2               # acked, but not stored or answered
+```
+
+**Credentials are encrypted at rest** with AES-256-GCM using
+`APP_ENCRYPTION_KEY` from `.env` (`npm run gen-key` makes one). Each
+ciphertext is bound to its business and field, so copying one client's
+encrypted token into another client's row in the database does not decrypt.
+**Back the key up:** without it, stored credentials cannot be recovered.
+
+**Isolation is enforced twice.** Every data function takes a business id, so
+TypeScript rejects an unscoped call; and every client-owned table declares
+`business_id NOT NULL` with no default and a foreign key, so the database
+rejects an unscoped row. `src/store/isolation.test.ts` drives two clients side
+by side through the real webhook and send path and probes each cross-client
+route; each of its leak checks was verified by switching the leak on and
+watching the test fail.
+
+**Opening hours are per business and per weekday**, and "is this slot in the
+past" is judged in the business's own timezone, not the server's.
 
 ## The agent
 

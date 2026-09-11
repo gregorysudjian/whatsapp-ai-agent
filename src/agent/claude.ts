@@ -8,7 +8,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.ts";
 import { log } from "../logger.ts";
-import { recordEvent } from "../store/db.ts";
+import { recordEvent, type BusinessId } from "../store/db.ts";
+import { getFacts } from "../store/businesses.ts";
 import { buildHistory } from "./memory.ts";
 import { buildSystemPrompt } from "./persona.ts";
 import { TOOLS, executeTool, type ToolContext } from "./tools.ts";
@@ -66,11 +67,15 @@ const MAX_ATTEMPTS = 2;
 const MAX_TOOL_ITERATIONS = 5;
 
 export async function generateReply(
+  businessId: BusinessId,
   waId: string,
   senderName?: string,
 ): Promise<ReplyResult> {
-  const messages = buildHistory(waId);
-  const ctx: ToolContext = { waId, senderName };
+  const messages = buildHistory(businessId, waId);
+  const ctx: ToolContext = { businessId, waId, senderName };
+  // Built once per turn, from this business's own facts. Stays byte-stable
+  // between edits to its settings, so the prompt cache holds per client.
+  const systemPrompt = buildSystemPrompt(getFacts(businessId));
 
   if (messages.length === 0) {
     // Nothing replayable (e.g. the only message was media with no caption).
@@ -99,7 +104,7 @@ export async function generateReply(
             max_tokens: config.anthropic.maxTokens,
             system: [{
               type: "text",
-              text: buildSystemPrompt(),
+              text: systemPrompt,
               // Resent on every inbound message, so it is the cheapest win
               // available. Requires the prompt to stay byte-stable.
               cache_control: { type: "ephemeral" },
@@ -122,8 +127,8 @@ export async function generateReply(
         // Guard the stop reason before reading content: on a refusal there
         // may be no content at all, and stop_details is null otherwise.
         if (response.stop_reason === "refusal") {
-          log.warn("claude_refused", { waId, category: response.stop_details?.category });
-          recordEvent("warn", "claude_refused", {
+          log.warn("claude_refused", { businessId, waId, category: response.stop_details?.category });
+          recordEvent(businessId, "warn", "claude_refused", {
             waId, category: response.stop_details?.category ?? null,
           });
           return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
@@ -163,13 +168,13 @@ export async function generateReply(
           .trim();
 
         log.info("claude_replied", {
-          waId, attempt, iterations: iteration, turns: messages.length,
+          businessId, waId, attempt, iterations: iteration, turns: messages.length,
           stop: response.stop_reason, ...total,
         });
 
         if (text === "") {
           log.warn("claude_empty_text", { waId, stop: response.stop_reason });
-          recordEvent("warn", "claude_empty_text", { waId, stop: response.stop_reason });
+          recordEvent(businessId, "warn", "claude_empty_text", { waId, stop: response.stop_reason });
           return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
         }
 
@@ -178,23 +183,23 @@ export async function generateReply(
 
       // Fell out of the loop still asking for tools.
       log.warn("tool_loop_exhausted", { waId, cap: MAX_TOOL_ITERATIONS });
-      recordEvent("warn", "tool_loop_exhausted", { waId, cap: MAX_TOOL_ITERATIONS });
+      recordEvent(businessId, "warn", "tool_loop_exhausted", { waId, cap: MAX_TOOL_ITERATIONS });
       return { text: FALLBACK_REPLY, ok: false, usage: total, handoff };
     } catch (err) {
       const detail = classifyError(err);
       lastKind = String(detail["kind"]);
       const willRetry = RETRYABLE.has(lastKind) && attempt < MAX_ATTEMPTS;
 
-      log.error("claude_failed", { waId, attempt, willRetry, ...detail });
+      log.error("claude_failed", { businessId, waId, attempt, willRetry, ...detail });
       if (!willRetry) {
-        recordEvent("error", "claude_failed", { waId, ...detail });
+        recordEvent(businessId, "error", "claude_failed", { waId, ...detail });
         return { text: FALLBACK_REPLY, ok: false, usage: undefined, handoff };
       }
       await delay(attempt * 500);
     }
   }
 
-  recordEvent("error", "claude_failed", { waId, kind: lastKind, exhausted: true });
+  recordEvent(businessId, "error", "claude_failed", { waId, kind: lastKind, exhausted: true });
   return { text: FALLBACK_REPLY, ok: false, usage: undefined, handoff: false };
 }
 
@@ -207,7 +212,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export function classifyError(err: unknown): Record<string, unknown> {
   if (err instanceof Anthropic.AuthenticationError) {
-    return { kind: "auth", status: err.status, hint: "Credential rejected - check ANTHROPIC_API_KEY" };
+    return { kind: "auth", status: err.status, hint: "Credential rejected - check ANTHROPIC_AUTH_TOKEN" };
   }
   if (err instanceof Anthropic.RateLimitError) {
     return { kind: "rate_limit", status: err.status };
@@ -232,7 +237,7 @@ export function classifyError(err: unknown): Record<string, unknown> {
   if (!config.anthropic.hasEnvCredential) {
     return {
       kind: "no_credential",
-      hint: "No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN and no usable profile",
+      hint: "No ANTHROPIC_AUTH_TOKEN in .env",
       message: String(err),
     };
   }

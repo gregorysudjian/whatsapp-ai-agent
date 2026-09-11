@@ -7,9 +7,10 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { log } from "../logger.ts";
-import { recordEvent, pauseForHuman } from "../store/db.ts";
-import { availableSlots, createBooking, lookupOrder } from "../store/business.ts";
-import { BUSINESS, personaIsConfigured } from "./persona.ts";
+import { recordEvent, pauseForHuman, type BusinessId } from "../store/db.ts";
+import { availableSlots, createBooking } from "../store/bookings.ts";
+import { getFacts } from "../store/businesses.ts";
+import { isConfigured } from "./persona.ts";
 
 /**
  * `strict: true` with additionalProperties:false guarantees the arguments
@@ -26,20 +27,6 @@ export const TOOLS: Anthropic.Tool[] = [
       type: "object",
       properties: {},
       required: [],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "lookup_order",
-    description:
-      "Look up an order by its id. Only returns the order if it belongs to the phone number this conversation is with.",
-    strict: true,
-    input_schema: {
-      type: "object",
-      properties: {
-        order_id: { type: "string", description: "The order reference, e.g. A1001" },
-      },
-      required: ["order_id"],
       additionalProperties: false,
     },
   },
@@ -89,6 +76,12 @@ export const TOOLS: Anthropic.Tool[] = [
 ];
 
 export interface ToolContext {
+  /**
+   * Which client this conversation belongs to. Like waId, it comes from the
+   * verified webhook route - never from tool input - so the model cannot be
+   * talked into acting on another client's data.
+   */
+  businessId: BusinessId;
   /** The contact this conversation is with - never taken from tool input. */
   waId: string;
   senderName: string | undefined;
@@ -111,40 +104,24 @@ export function executeTool(
   ctx: ToolContext,
 ): ToolOutcome {
   const args = (input ?? {}) as Record<string, unknown>;
-  log.info("tool_called", { name, waId: ctx.waId });
-  recordEvent("info", "tool_called", { name, waId: ctx.waId });
+  log.info("tool_called", { name, businessId: ctx.businessId, waId: ctx.waId });
+  recordEvent(ctx.businessId, "info", "tool_called", { name, waId: ctx.waId });
 
   switch (name) {
-    case "get_business_info":
+    case "get_business_info": {
+      const facts = getFacts(ctx.businessId);
       return {
-        content: personaIsConfigured()
+        content: isConfigured(facts)
           ? JSON.stringify({
-              name: BUSINESS.name, what: BUSINESS.what,
-              hours: BUSINESS.hours, address: BUSINESS.address, contact: BUSINESS.contact,
+              name: facts.name, what: facts.what,
+              hours: facts.hours, address: facts.address, contact: facts.contact,
             })
           : "The business details have not been configured yet. Tell the customer you do not have that information and offer to pass the question to a human.",
-      };
-
-    case "lookup_order": {
-      const orderId = String(args["order_id"] ?? "");
-      const found = lookupOrder(orderId, ctx.waId);
-
-      if (found === "not_found") return { content: `No order found with id ${orderId}.` };
-      if (found === "wrong_phone") {
-        // Deliberately indistinguishable from not_found: saying "that order
-        // exists but is not yours" confirms the id to whoever is asking.
-        return { content: `No order found with id ${orderId}.` };
-      }
-      return {
-        content: JSON.stringify({
-          id: found.id, status: found.status, item: found.item,
-          eta: found.eta ?? "not yet estimated",
-        }),
       };
     }
 
     case "check_availability": {
-      const slots = availableSlots(String(args["date"] ?? ""));
+      const slots = availableSlots(ctx.businessId, String(args["date"] ?? ""));
       return {
         content: slots.length
           ? JSON.stringify({ free: slots })
@@ -154,6 +131,7 @@ export function executeTool(
 
     case "create_booking": {
       const result = createBooking(
+        ctx.businessId,
         ctx.waId,
         String(args["name"] ?? ctx.senderName ?? ""),
         String(args["slot"] ?? ""),
@@ -172,7 +150,7 @@ export function executeTool(
 
     case "escalate_to_human": {
       const reason = String(args["reason"] ?? "unspecified");
-      pauseForHuman(ctx.waId, reason);
+      pauseForHuman(ctx.businessId, ctx.waId, reason);
       return {
         content: "Handed to a human. Tell the customer someone will follow up, then stop.",
         handoff: true,

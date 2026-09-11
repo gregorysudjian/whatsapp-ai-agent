@@ -7,8 +7,38 @@
  */
 
 import crypto from "node:crypto";
-import { config } from "../config.ts";
+import { DEFAULT_BUSINESS_ID, getBusiness, getWhatsappCredentials } from "../store/businesses.ts";
+import type { BusinessId } from "../store/db.ts";
 import type { IncomingMessage, MessageStatus, WebhookPayload } from "../whatsapp/types.ts";
+
+/**
+ * Which client a synthesized webhook is for: the URL Meta would call, the
+ * number the payload claims, and the secret it is signed with. Tests that
+ * probe isolation build mismatched targets on purpose - A's secret on B's
+ * URL, B's number in A's payload - so each piece is independently settable.
+ */
+export interface Target {
+  path: string;
+  phoneNumberId: string;
+  appSecret: string;
+}
+
+/** Real per-client route, signed and addressed as that client's Meta app would. */
+export function targetFor(businessId: BusinessId): Target {
+  const business = getBusiness(businessId);
+  const creds = getWhatsappCredentials(businessId);
+  if (!business || !creds) throw new Error(`Business ${businessId} is not connected`);
+  return {
+    path: `/webhook/b/${business.publicId}`,
+    phoneNumberId: creds.phoneNumberId,
+    appSecret: creds.appSecret,
+  };
+}
+
+/** The legacy bare `/webhook`, which maps to the default business. */
+export function defaultTarget(): Target {
+  return { ...targetFor(DEFAULT_BUSINESS_ID), path: "/webhook" };
+}
 
 export interface TextMessageOptions {
   id?: string;
@@ -16,6 +46,8 @@ export interface TextMessageOptions {
   name?: string;
   /** Seconds since epoch, as Meta sends it. */
   timestamp?: number;
+  /** The number the payload claims to be for. Defaults to the default business. */
+  phoneNumberId?: string;
 }
 
 let counter = 0;
@@ -50,7 +82,7 @@ export function textMessagePayload(
           messaging_product: "whatsapp",
           metadata: {
             display_phone_number: "15550000000",
-            phone_number_id: config.whatsapp.phoneNumberId,
+            phone_number_id: options.phoneNumberId ?? defaultTarget().phoneNumberId,
           },
           contacts: [{ profile: { name: options.name ?? "Test User" }, wa_id: from }],
           messages: [message],
@@ -60,7 +92,10 @@ export function textMessagePayload(
   };
 }
 
-export function statusPayload(status: MessageStatus): WebhookPayload {
+export function statusPayload(
+  status: MessageStatus,
+  phoneNumberId: string = defaultTarget().phoneNumberId,
+): WebhookPayload {
   return {
     object: "whatsapp_business_account",
     entry: [{
@@ -71,7 +106,7 @@ export function statusPayload(status: MessageStatus): WebhookPayload {
           messaging_product: "whatsapp",
           metadata: {
             display_phone_number: "15550000000",
-            phone_number_id: config.whatsapp.phoneNumberId,
+            phone_number_id: phoneNumberId,
           },
           statuses: [status],
         },
@@ -87,10 +122,13 @@ export interface SignedPayload {
 }
 
 /** Serialise once and sign those exact bytes - re-stringifying breaks the HMAC. */
-export function sign(payload: WebhookPayload): SignedPayload {
+export function sign(
+  payload: WebhookPayload,
+  appSecret: string = defaultTarget().appSecret,
+): SignedPayload {
   const body = JSON.stringify(payload);
   const digest = crypto
-    .createHmac("sha256", config.whatsapp.appSecret)
+    .createHmac("sha256", appSecret)
     .update(Buffer.from(body))
     .digest("hex");
   const signature = `sha256=${digest}`;
@@ -106,8 +144,9 @@ export function sign(payload: WebhookPayload): SignedPayload {
 export async function deliver(
   baseUrl: string,
   payload: WebhookPayload,
+  target: Target = defaultTarget(),
 ): Promise<{ status: number; text: string }> {
-  const { body, headers } = sign(payload);
-  const res = await fetch(`${baseUrl}/webhook`, { method: "POST", headers, body });
+  const { body, headers } = sign(payload, target.appSecret);
+  const res = await fetch(`${baseUrl}${target.path}`, { method: "POST", headers, body });
   return { status: res.status, text: await res.text() };
 }

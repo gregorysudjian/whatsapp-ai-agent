@@ -15,6 +15,7 @@ import { MockGraph } from "../testing/mock-graph.ts";
 import { textMessagePayload, statusPayload, deliver, sign } from "../testing/webhook.ts";
 import { setClientForTesting, FALLBACK_REPLY, type MessagesClient } from "../agent/claude.ts";
 import { listMessages } from "../store/queries.ts";
+import { DEFAULT_BUSINESS_ID as B } from "../store/businesses.ts";
 
 const graph = new MockGraph();
 let server: Server;
@@ -63,7 +64,7 @@ const waitForSends = (count: number) =>
 const waitForStoredOutbound = (waId: string, count = 1) =>
   waitFor(
     `${count} stored outbound for ${waId}`,
-    () => listMessages(waId).filter((m) => m.direction === "out").length >= count,
+    () => listMessages(B, waId).filter((m) => m.direction === "out").length >= count,
   );
 
 before(async () => {
@@ -96,7 +97,7 @@ test("a signed message is acked fast, then answered", async () => {
   assert.deepEqual(graph.sentTexts, ["We're open until 6pm today."]);
 
   // Transcript stored in the order the agent observed it.
-  const stored = listMessages(wa);
+  const stored = listMessages(B, wa);
   assert.deepEqual(stored.map((m) => m.direction), ["in", "out"]);
   assert.equal(stored[0]?.text, "are you open?");
   assert.equal(stored[1]?.text, "We're open until 6pm today.");
@@ -114,7 +115,7 @@ test("an unsigned webhook is rejected and nothing is stored", async () => {
 
   assert.equal(res.status, 403);
   assert.equal(graph.sentTexts.length, 0);
-  assert.equal(listMessages("14000000002").length, 0);
+  assert.equal(listMessages(B, "14000000002").length, 0);
 });
 
 test("a tampered body fails the signature even with a valid-looking header", async () => {
@@ -143,7 +144,7 @@ test("Meta's retry of the same message is ignored, not answered twice", async ()
   await new Promise((r) => setTimeout(r, 200));
 
   assert.equal(graph.sentTexts.length, 1, "a retry must not produce a second reply");
-  assert.equal(listMessages(wa).length, 2, "one inbound, one outbound");
+  assert.equal(listMessages(B, wa).length, 2, "one inbound, one outbound");
 });
 
 test("concurrent messages from one contact do not interleave", async () => {
@@ -156,7 +157,7 @@ test("concurrent messages from one contact do not interleave", async () => {
   ]);
   await waitForStoredOutbound(wa, 2);
 
-  const messages = listMessages(wa);
+  const messages = listMessages(B, wa);
 
   // Arrival order between two concurrent requests is not deterministic, and
   // Meta does not guarantee it either. The invariant that matters is that the
@@ -192,7 +193,7 @@ test("a delivery receipt updates the stored message, sending nothing", async () 
   await deliver(baseUrl, textMessagePayload("hey", { from: wa }));
   await waitForStoredOutbound(wa);
 
-  const outbound = listMessages(wa).find((m) => m.direction === "out")!;
+  const outbound = listMessages(B, wa).find((m) => m.direction === "out")!;
   graph.reset();
 
   await deliver(baseUrl, statusPayload({
@@ -201,5 +202,5 @@ test("a delivery receipt updates the stored message, sending nothing", async () 
   await new Promise((r) => setTimeout(r, 150));
 
   assert.equal(graph.sentTexts.length, 0, "a receipt is not a message");
-  assert.equal(listMessages(wa).find((m) => m.id === outbound.id)?.status, "read");
+  assert.equal(listMessages(B, wa).find((m) => m.id === outbound.id)?.status, "read");
 });

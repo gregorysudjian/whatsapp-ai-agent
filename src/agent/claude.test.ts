@@ -7,6 +7,7 @@ import {
 } from "./claude.ts";
 import { recordInbound } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
+import { DEFAULT_BUSINESS_ID as B } from "../store/businesses.ts";
 
 // --- fake client ----------------------------------------------------------
 
@@ -70,7 +71,7 @@ function seedInbound(waId: string, text: string): void {
     id: `seed${++n}`, from: waId, senderName: "T", timestamp: new Date(), text,
     raw: { id: `seed${n}`, from: waId, timestamp: "0", type: "text", text: { body: text } },
   };
-  recordInbound(msg);
+  recordInbound(B, msg);
 }
 
 beforeEach(() => { seedInbound(WA, "are you open?"); });
@@ -82,7 +83,7 @@ test("returns the model's text and reports usage", async () => {
   const { client, capture } = fakeClient([message()]);
   setClientForTesting(client);
 
-  const result = await generateReply(WA);
+  const result = await generateReply(B, WA);
 
   assert.equal(result.ok, true);
   assert.equal(result.text, "We're open until 6pm.");
@@ -94,7 +95,7 @@ test("returns the model's text and reports usage", async () => {
 test("request shape matches what Opus 5 accepts", async () => {
   const { client, capture } = fakeClient([message()]);
   setClientForTesting(client);
-  await generateReply(WA);
+  await generateReply(B, WA);
 
   const p = capture.params!;
   assert.equal(p.model, "claude-opus-5");
@@ -117,9 +118,9 @@ test("the cached system prompt is byte-stable across calls", async () => {
   const { client, capture } = fakeClient([message()]);
   setClientForTesting(client);
 
-  await generateReply(WA);
+  await generateReply(B, WA);
   const first = (capture.params!.system as Anthropic.TextBlockParam[])[0]?.text;
-  await generateReply(WA);
+  await generateReply(B, WA);
   const second = (capture.params!.system as Anthropic.TextBlockParam[])[0]?.text;
 
   assert.equal(first, second, "any per-call variation silently invalidates the cache");
@@ -134,7 +135,7 @@ test("a refusal yields the fallback, never empty text", async () => {
   } as Partial<Anthropic.Message>)]);
   setClientForTesting(client);
 
-  const result = await generateReply(WA);
+  const result = await generateReply(B, WA);
   assert.equal(result.ok, false);
   assert.equal(result.text, FALLBACK_REPLY);
 });
@@ -145,14 +146,14 @@ test("a thinking-only response yields the fallback", async () => {
   } as Partial<Anthropic.Message>)]);
   setClientForTesting(client);
 
-  assert.equal((await generateReply(WA)).text, FALLBACK_REPLY);
+  assert.equal((await generateReply(B, WA)).text, FALLBACK_REPLY);
 });
 
 test("a rate limit is retried, then succeeds", async () => {
   const { client, capture } = fakeClient([rateLimited(), message()]);
   setClientForTesting(client);
 
-  const result = await generateReply(WA);
+  const result = await generateReply(B, WA);
   assert.equal(result.ok, true, "second attempt should succeed");
   assert.equal(capture.calls, 2);
 });
@@ -161,7 +162,7 @@ test("an exhausted rate limit sends the fallback, not silence", async () => {
   const { client, capture } = fakeClient([rateLimited(), rateLimited()]);
   setClientForTesting(client);
 
-  const result = await generateReply(WA);
+  const result = await generateReply(B, WA);
   assert.equal(result.ok, false);
   assert.equal(result.text, FALLBACK_REPLY);
   assert.equal(capture.calls, 2, "must stop at MAX_ATTEMPTS, not loop");
@@ -171,7 +172,7 @@ test("an auth error is not retried - retrying a bad key just burns time", async 
   const { client, capture } = fakeClient([unauthorized()]);
   setClientForTesting(client);
 
-  assert.equal((await generateReply(WA)).ok, false);
+  assert.equal((await generateReply(B, WA)).ok, false);
   assert.equal(capture.calls, 1);
 });
 
@@ -179,7 +180,7 @@ test("a first-ever conversation with no history does not crash", async () => {
   const { client } = fakeClient([message()]);
   setClientForTesting(client);
 
-  const result = await generateReply("19999999998");
+  const result = await generateReply(B, "19999999998");
   assert.equal(result.ok, false);
   assert.equal(result.text, FALLBACK_REPLY);
 });
@@ -204,5 +205,5 @@ test("a missing credential is named, not filed as unknown", () => {
   // from config rather than matched on message text.
   const result = classifyError(new Error("Could not resolve authentication method."));
   assert.equal(result["kind"], "no_credential");
-  assert.match(String(result["hint"]), /ANTHROPIC_API_KEY/);
+  assert.match(String(result["hint"]), /ANTHROPIC_AUTH_TOKEN/);
 });

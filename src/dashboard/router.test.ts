@@ -6,6 +6,7 @@ import { createApp } from "../app.ts";
 import { config } from "../config.ts";
 import { recordInbound, pauseForHuman, isPaused, setAgentEnabled } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
+import { DEFAULT_BUSINESS_ID as B } from "../store/businesses.ts";
 
 let server: Server;
 let baseUrl: string;
@@ -17,7 +18,7 @@ const seed = (waId: string): void => {
     id, from: waId, senderName: "Dash", timestamp: new Date(), text: "hello",
     raw: { id, from: waId, timestamp: "0", type: "text", text: { body: "hello" } },
   };
-  recordInbound(msg);
+  recordInbound(B, msg);
 };
 
 before(async () => {
@@ -27,7 +28,7 @@ before(async () => {
 });
 
 after(async () => {
-  setAgentEnabled(true);
+  setAgentEnabled(B, true);
   await new Promise((r) => server.close(r));
 });
 
@@ -75,7 +76,7 @@ test("the toggle flips the agent and reports the new state", async () => {
 test("a conversation needing a human is flagged and sorted to the top", async () => {
   seed("19100000001");
   seed("19100000002");
-  pauseForHuman("19100000002", "customer asked for a person");
+  pauseForHuman(B, "19100000002", "customer asked for a person");
 
   const conversations = await (
     await fetch(`${baseUrl}/api/conversations?token=${token}`)
@@ -92,5 +93,5 @@ test("clearing the handoff from the dashboard resumes the agent there", async ()
     { method: "POST" },
   );
   assert.equal(res.status, 200);
-  assert.equal(isPaused("19100000002"), false);
+  assert.equal(isPaused(B, "19100000002"), false);
 });

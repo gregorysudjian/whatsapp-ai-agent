@@ -8,6 +8,7 @@ import { textMessagePayload, deliver } from "../testing/webhook.ts";
 import { setClientForTesting, type MessagesClient } from "../agent/claude.ts";
 import { agentEnabled, setAgentEnabled, pauseForHuman, clearHandoff, isPaused } from "../store/db.ts";
 import { listMessages } from "../store/queries.ts";
+import { DEFAULT_BUSINESS_ID as B } from "../store/businesses.ts";
 
 const graph = new MockGraph();
 let server: Server;
@@ -43,7 +44,7 @@ test("setup", async () => {
 });
 
 after(async () => {
-  setAgentEnabled(true);
+  setAgentEnabled(B, true);
   setClientForTesting(undefined);
   await graph.close();
   await new Promise((r) => server.close(r));
@@ -52,12 +53,12 @@ after(async () => {
 const settle = () => new Promise((r) => setTimeout(r, 250));
 
 test("the agent is on by default", () => {
-  assert.equal(agentEnabled(), true);
+  assert.equal(agentEnabled(B), true);
 });
 
 test("with the agent off, messages are stored but not answered", async () => {
   const wa = "16000000001";
-  setAgentEnabled(false);
+  setAgentEnabled(B, false);
   graph.reset();
   modelCalls = 0;
 
@@ -66,13 +67,13 @@ test("with the agent off, messages are stored but not answered", async () => {
 
   assert.equal(graph.sentTexts.length, 0, "no reply while disabled");
   assert.equal(modelCalls, 0, "the model must not be called - that is the point");
-  assert.equal(listMessages(wa).length, 1, "the question is still captured");
-  assert.equal(listMessages(wa)[0]?.text, "anyone there?");
+  assert.equal(listMessages(B, wa).length, 1, "the question is still captured");
+  assert.equal(listMessages(B, wa)[0]?.text, "anyone there?");
 });
 
 test("turning it back on resumes replies", async () => {
   const wa = "16000000002";
-  setAgentEnabled(true);
+  setAgentEnabled(B, true);
   graph.reset();
 
   await deliver(baseUrl, textMessagePayload("hello again", { from: wa }));
@@ -91,22 +92,22 @@ test("a paused conversation is silent while others continue", async () => {
   await settle();
   graph.reset();
 
-  pauseForHuman(paused, "customer asked for a human");
-  assert.equal(isPaused(paused), true);
+  pauseForHuman(B, paused, "customer asked for a human");
+  assert.equal(isPaused(B, paused), true);
 
   await deliver(baseUrl, textMessagePayload("still there?", { from: paused }));
   await deliver(baseUrl, textMessagePayload("unrelated question", { from: normal }));
   await settle();
 
   assert.equal(graph.sentTexts.length, 1, "only the un-paused contact is answered");
-  assert.equal(listMessages(paused).filter((m) => m.direction === "in").length, 2,
+  assert.equal(listMessages(B, paused).filter((m) => m.direction === "in").length, 2,
     "the paused contact's messages are still captured for the human");
 });
 
 test("clearing the handoff resumes that conversation", async () => {
   const wa = "16000000003";
-  clearHandoff(wa);
-  assert.equal(isPaused(wa), false);
+  clearHandoff(B, wa);
+  assert.equal(isPaused(B, wa), false);
   graph.reset();
 
   await deliver(baseUrl, textMessagePayload("are you back?", { from: wa }));

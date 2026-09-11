@@ -13,47 +13,26 @@ npm run dev
 
 ## Do these three things (about 10 minutes)
 
-### 1. Add an Anthropic credential — the one real blocker
+### 1. Add your Anthropic auth token — the one real blocker
 
-Put a key in `.env`:
+Put it in `.env`:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-api03-...
+ANTHROPIC_AUTH_TOKEN=<your token>
 ```
 
-Get one at [console.anthropic.com](https://console.anthropic.com) → API keys.
+Leave `ANTHROPIC_API_KEY` absent: the SDK checks it first, so any value there,
+even an empty one, would be used instead of the auth token. The code deletes
+empty credential vars at boot and says so in the log.
 
-**Leave `ANTHROPIC_AUTH_TOKEN` commented out or absent.** It was sitting in your
-`.env` as `ANTHROPIC_AUTH_TOKEN=` with no value, which is worse than missing:
-an empty string still claims its slot in the SDK's credential chain, so the SDK
-authenticates with `""` and never looks further. The code now deletes empty
-credential vars at boot and says so in the log, but only one of the two should
-carry a value.
-
-Until a key is present the agent boots fine, warns once, and answers every
+Until a token is present the agent boots fine, warns once, and answers every
 message with the fallback sentence. That path is tested — it is not a crash.
 
-You asked me to use this session's Claude Code login instead. I didn't, and
-beyond the licensing question it wouldn't have worked: that token is rotated by
-Claude Code on its own schedule, so a copy in `.env` would have gone stale
-within hours and left you with a bot that broke overnight for no visible reason.
+### 2. Business details — done
 
-### 2. Fill in your business details
-
-Edit `src/agent/persona.ts` — the block at the top:
-
-```ts
-export const BUSINESS: BusinessFacts = {
-  name: "<YOUR BUSINESS NAME>",
-  what: "<one line: what you sell or do>",
-  hours: "<e.g. Mon-Fri 9am-6pm>",
-  ...
-};
-```
-
-Until you do, the agent tells customers it hasn't been given those details and
-offers a human — deliberately, rather than inventing your opening hours. The
-server logs `persona_not_configured` at boot as a reminder.
+`src/agent/persona.ts` is set to Ninja Co, robotics and coding tutoring,
+Monday to Friday 8am–3pm. Bookings follow the same hours. Address and human
+contact are still blank; the agent offers a human when asked for them.
 
 ### 3. Send one real message
 

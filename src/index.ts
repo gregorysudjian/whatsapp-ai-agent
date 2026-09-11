@@ -1,7 +1,12 @@
 import { config, prunedCredentials } from "./config.ts";
 import { log } from "./logger.ts";
 import { createApp } from "./app.ts";
-import { personaIsConfigured } from "./agent/persona.ts";
+import { isConfigured } from "./agent/persona.ts";
+import { getFacts, listBusinesses, seedDefaultBusiness } from "./store/businesses.ts";
+
+// Before the app starts taking webhooks: carries a pre-multi-tenancy install's
+// env credentials and hardcoded facts into business #1.
+seedDefaultBusiness();
 
 const app = createApp();
 
@@ -17,14 +22,21 @@ app.listen(config.port, () => {
 
   if (!config.anthropic.hasEnvCredential) {
     log.warn("anthropic_credential_missing", {
-      hint: "Set ANTHROPIC_API_KEY in .env (or run `ant auth login`). Until then every reply is the fallback message.",
+      hint: "Set ANTHROPIC_AUTH_TOKEN in .env. Until then every reply is the fallback message.",
       model: config.anthropic.model,
     });
   }
 
-  if (!personaIsConfigured()) {
-    log.warn("persona_not_configured", {
-      hint: "Edit src/agent/persona.ts - the agent will not state hours, prices or an address it has not been given.",
+  // One line per client: the URL to paste into that client's Meta app, and
+  // anything that would stop its agent working.
+  for (const b of listBusinesses()) {
+    log.info("business", {
+      id: b.id,
+      name: b.name,
+      status: b.status,
+      webhook: `/webhook/b/${b.publicId}`,
+      connected: b.hasCredentials,
+      ...(isConfigured(getFacts(b.id)) ? {} : { warning: "facts not configured - agent will not state hours or prices" }),
     });
   }
 

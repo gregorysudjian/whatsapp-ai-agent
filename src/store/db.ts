@@ -2,8 +2,11 @@
  * SQLite store, built on node:sqlite (bundled with Node 22.5+) so the agent
  * gains history without a native dependency to compile on every host.
  *
- * Two consumers: the dashboard reads it, and phase 3's conversation memory
- * will write to the same `messages` table rather than inventing a second one.
+ * Tenancy: every function that touches client data takes a businessId as its
+ * first argument, and the schema rejects any write without one (NOT NULL, no
+ * default, foreign key enforced). Isolation therefore holds in two places at
+ * once - the type checker refuses an unscoped call, and the database refuses
+ * an unscoped row.
  */
 
 import { DatabaseSync } from "node:sqlite";
@@ -12,7 +15,10 @@ import path from "node:path";
 import { config } from "../config.ts";
 import { log } from "../logger.ts";
 import { publish } from "../core/events.ts";
+import { migrate, SCHEMA_VERSION } from "./schema.ts";
 import type { InboundMessage, MessageStatus } from "../whatsapp/types.ts";
+
+export type BusinessId = number;
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
@@ -23,138 +29,65 @@ export const db = new DatabaseSync(config.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 5000");
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS messages (
-    id          TEXT PRIMARY KEY,
-    wa_id       TEXT NOT NULL,
-    direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
-    type        TEXT NOT NULL,
-    text        TEXT NOT NULL DEFAULT '',
-    sender_name TEXT,
-    ts          INTEGER NOT NULL,
-    status      TEXT,
-    error       TEXT,
-    raw         TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS messages_by_convo ON messages (wa_id, ts DESC);
-  CREATE INDEX IF NOT EXISTS messages_by_ts    ON messages (ts DESC);
-
-  CREATE TABLE IF NOT EXISTS contacts (
-    wa_id           TEXT PRIMARY KEY,
-    name            TEXT,
-    first_seen      INTEGER NOT NULL,
-    last_inbound_ts INTEGER,
-    last_message_ts INTEGER,
-    inbound_count   INTEGER NOT NULL DEFAULT 0,
-    outbound_count  INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS events (
-    id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts     INTEGER NOT NULL,
-    level  TEXT NOT NULL,
-    name   TEXT NOT NULL,
-    detail TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS events_by_ts ON events (ts DESC);
-`);
-
-/**
- * Additive migrations. Guarded by PRAGMA rather than try/catch so a real
- * failure still surfaces, and safe to run against a database that already
- * holds live conversation history.
- */
-function addColumns(table: string, columns: Record<string, string>): string[] {
-  const existing = new Set(
-    db.prepare(`PRAGMA table_info(${table})`).all().map((r) => String(r["name"])),
-  );
-  const added: string[] = [];
-  for (const [name, decl] of Object.entries(columns)) {
-    if (existing.has(name)) continue;
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${decl}`);
-    added.push(name);
-  }
-  return added;
-}
-
-const migratedContacts = addColumns("contacts", {
-  // Per-contact pause. Set when a human takes over, so the agent stops
-  // replying in that thread without stopping every other conversation.
-  paused: "INTEGER NOT NULL DEFAULT 0",
-  needs_human: "INTEGER NOT NULL DEFAULT 0",
-  handoff_reason: "TEXT",
-});
-
-const migrated = addColumns("messages", {
-  input_tokens: "INTEGER",
-  output_tokens: "INTEGER",
-  cache_read_tokens: "INTEGER",
-  latency_ms: "INTEGER",
-});
-
-const allMigrations = [...migrated, ...migratedContacts];
+const applied = migrate(db);
 log.info("store_ready", {
   path: config.dbPath,
-  ...(allMigrations.length ? { migrated: allMigrations } : {}),
+  schema: SCHEMA_VERSION,
+  ...(applied.length ? { migrated: applied } : {}),
 });
 
 // --- kill switch ----------------------------------------------------------
 
-const getSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+const getSetting = db.prepare(`SELECT value FROM settings WHERE business_id = ? AND key = ?`);
 const putSetting = db.prepare(`
-  INSERT INTO settings (key, value) VALUES (?, ?)
-  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  INSERT INTO settings (business_id, key, value) VALUES (?, ?, ?)
+  ON CONFLICT(business_id, key) DO UPDATE SET value = excluded.value
 `);
 
 const AGENT_ENABLED = "agent_enabled";
 
 /**
- * Global stop. Messages are still received, stored and shown on the
+ * Per-client stop. Messages are still received, stored and shown on the
  * dashboard when this is off - only the reply is withheld - so turning the
  * agent off never loses a customer's question.
- *
- * Defaults to on, and lives in the database rather than an env var so it can
- * be flipped without a restart.
  */
-export function agentEnabled(): boolean {
-  const row = getSetting.get(AGENT_ENABLED) as Record<string, unknown> | undefined;
+export function agentEnabled(businessId: BusinessId): boolean {
+  const row = getSetting.get(businessId, AGENT_ENABLED) as Record<string, unknown> | undefined;
   return row === undefined ? true : row["value"] !== "0";
 }
 
-export function setAgentEnabled(enabled: boolean): void {
-  putSetting.run(AGENT_ENABLED, enabled ? "1" : "0");
-  recordEvent("warn", enabled ? "agent_enabled" : "agent_disabled");
+export function setAgentEnabled(businessId: BusinessId, enabled: boolean): void {
+  putSetting.run(businessId, AGENT_ENABLED, enabled ? "1" : "0");
+  recordEvent(businessId, "warn", enabled ? "agent_enabled" : "agent_disabled");
 }
 
-const pauseStmt = db.prepare(`
-  UPDATE contacts SET paused = ?, needs_human = ?, handoff_reason = ? WHERE wa_id = ?
-`);
-const pausedStmt = db.prepare(`SELECT paused, needs_human FROM contacts WHERE wa_id = ?`);
+// --- handoff --------------------------------------------------------------
 
-export function isPaused(waId: string): boolean {
-  const row = pausedStmt.get(waId) as Record<string, unknown> | undefined;
+const pauseStmt = db.prepare(`
+  UPDATE contacts SET paused = ?, needs_human = ?, handoff_reason = ?
+  WHERE business_id = ? AND wa_id = ?
+`);
+const pausedStmt = db.prepare(
+  `SELECT paused FROM contacts WHERE business_id = ? AND wa_id = ?`,
+);
+
+export function isPaused(businessId: BusinessId, waId: string): boolean {
+  const row = pausedStmt.get(businessId, waId) as Record<string, unknown> | undefined;
   return Number(row?.["paused"] ?? 0) === 1;
 }
 
 /** Hand a conversation to a person: agent stops replying there until cleared. */
-export function pauseForHuman(waId: string, reason: string): void {
-  pauseStmt.run(1, 1, reason, waId);
-  recordEvent("warn", "handoff_requested", { waId, reason });
-  publish({ kind: "event", level: "warn", name: "handoff_requested" });
+export function pauseForHuman(businessId: BusinessId, waId: string, reason: string): void {
+  pauseStmt.run(1, 1, reason, businessId, waId);
+  recordEvent(businessId, "warn", "handoff_requested", { waId, reason });
 }
 
-export function clearHandoff(waId: string): void {
-  pauseStmt.run(0, 0, null, waId);
-  recordEvent("info", "handoff_cleared", { waId });
-  publish({ kind: "event", level: "info", name: "handoff_cleared" });
+export function clearHandoff(businessId: BusinessId, waId: string): void {
+  pauseStmt.run(0, 0, null, businessId, waId);
+  recordEvent(businessId, "info", "handoff_cleared", { waId });
 }
+
+// --- messages -------------------------------------------------------------
 
 /** Meta's free-form reply window. Outside it, only approved templates send. */
 export const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -162,15 +95,15 @@ export const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Every column bound explicitly: an inline NULL in the VALUES list shifts the
 // positional parameters after it, which silently files data in the wrong column.
 const insertMessage = db.prepare(`
-  INSERT INTO messages (id, wa_id, direction, type, text, sender_name, ts, status, error, raw)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO messages (id, business_id, wa_id, direction, type, text, sender_name, ts, status, error, raw)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO NOTHING
 `);
 
 const touchContact = db.prepare(`
-  INSERT INTO contacts (wa_id, name, first_seen, last_inbound_ts, last_message_ts, inbound_count, outbound_count)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(wa_id) DO UPDATE SET
+  INSERT INTO contacts (business_id, wa_id, name, first_seen, last_inbound_ts, last_message_ts, inbound_count, outbound_count)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(business_id, wa_id) DO UPDATE SET
     name            = COALESCE(excluded.name, contacts.name),
     last_inbound_ts = MAX(COALESCE(contacts.last_inbound_ts, 0), COALESCE(excluded.last_inbound_ts, 0)),
     last_message_ts = MAX(COALESCE(contacts.last_message_ts, 0), COALESCE(excluded.last_message_ts, 0)),
@@ -178,29 +111,29 @@ const touchContact = db.prepare(`
     outbound_count  = contacts.outbound_count + excluded.outbound_count
 `);
 
-export function recordInbound(msg: InboundMessage): void {
+export function recordInbound(businessId: BusinessId, msg: InboundMessage): void {
   const ts = msg.timestamp.getTime();
   insertMessage.run(
-    msg.id, msg.from, "in", msg.raw.type, msg.text,
+    msg.id, businessId, msg.from, "in", msg.raw.type, msg.text,
     msg.senderName ?? null, ts, null, null, JSON.stringify(msg.raw),
   );
-  touchContact.run(msg.from, msg.senderName ?? null, ts, ts, ts, 1, 0);
-  publish({ kind: "message", direction: "in", waId: msg.from, id: msg.id });
+  touchContact.run(businessId, msg.from, msg.senderName ?? null, ts, ts, ts, 1, 0);
+  publish({ businessId, kind: "message", direction: "in", waId: msg.from, id: msg.id });
 }
 
 /**
  * `id` is the wamid Graph returns on send - without it, delivery receipts
  * arriving later have no row to attach to.
  */
-export function recordOutbound(id: string, waId: string, text: string): void {
+export function recordOutbound(businessId: BusinessId, id: string, waId: string, text: string): void {
   const ts = Date.now();
-  insertMessage.run(id, waId, "out", "text", text, null, ts, null, null, null);
-  touchContact.run(waId, null, ts, null, ts, 0, 1);
-  publish({ kind: "message", direction: "out", waId, id });
+  insertMessage.run(id, businessId, waId, "out", "text", text, null, ts, null, null, null);
+  touchContact.run(businessId, waId, null, ts, null, ts, 0, 1);
+  publish({ businessId, kind: "message", direction: "out", waId, id });
 }
 
 const windowStmt = db.prepare(
-  `SELECT last_inbound_ts FROM contacts WHERE wa_id = ?`,
+  `SELECT last_inbound_ts FROM contacts WHERE business_id = ? AND wa_id = ?`,
 );
 
 export interface WindowState {
@@ -214,8 +147,8 @@ export interface WindowState {
  * inbound message. Outside it, only pre-approved templates deliver - the API
  * rejects everything else, so an unguarded send just vanishes.
  */
-export function windowState(waId: string): WindowState {
-  const row = windowStmt.get(waId) as Record<string, unknown> | undefined;
+export function windowState(businessId: BusinessId, waId: string): WindowState {
+  const row = windowStmt.get(businessId, waId) as Record<string, unknown> | undefined;
   const raw = row?.["last_inbound_ts"];
   const last = typeof raw === "number" ? raw : typeof raw === "bigint" ? Number(raw) : null;
 
@@ -225,30 +158,35 @@ export function windowState(waId: string): WindowState {
   return { open: remainingMs > 0, remainingMs, lastInboundTs: last };
 }
 
-const seenStmt = db.prepare(`SELECT 1 AS hit FROM messages WHERE id = ?`);
+const seenStmt = db.prepare(`SELECT 1 AS hit FROM messages WHERE business_id = ? AND id = ?`);
 
 /** Has this message id already been stored? Survives restarts, unlike a Map. */
-export function hasMessage(messageId: string): boolean {
-  return seenStmt.get(messageId) !== undefined;
+export function hasMessage(businessId: BusinessId, messageId: string): boolean {
+  return seenStmt.get(businessId, messageId) !== undefined;
 }
 
+/**
+ * Scoped by business as well as id: a receipt arriving on one client's
+ * webhook must not be able to touch another client's message.
+ */
 const applyStatus = db.prepare(`
-  UPDATE messages SET status = ?, error = ? WHERE id = ?
+  UPDATE messages SET status = ?, error = ? WHERE business_id = ? AND id = ?
 `);
 
-export function recordStatus(status: MessageStatus): void {
+export function recordStatus(businessId: BusinessId, status: MessageStatus): void {
   applyStatus.run(
     status.status,
     status.errors ? JSON.stringify(status.errors) : null,
+    businessId,
     status.id,
   );
-  publish({ kind: "status", waId: status.recipient_id, id: status.id, status: status.status });
+  publish({ businessId, kind: "status", waId: status.recipient_id, id: status.id, status: status.status });
 }
 
 const usageStmt = db.prepare(`
   UPDATE messages
   SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, latency_ms = ?
-  WHERE id = ?
+  WHERE business_id = ? AND id = ?
 `);
 
 export interface RecordedUsage {
@@ -260,25 +198,33 @@ export interface RecordedUsage {
 
 /**
  * Attach model cost to the reply it produced. Kept on the message rather than
- * a separate table so "what did this conversation cost" is one query, and so
- * cost is visible per answer instead of as a monthly surprise.
+ * a separate table so "what did this conversation cost" is one query - and,
+ * now, "what did this client cost" for billing.
  */
-export function recordUsage(messageId: string, usage: RecordedUsage): void {
+export function recordUsage(businessId: BusinessId, messageId: string, usage: RecordedUsage): void {
   usageStmt.run(
     usage.inputTokens, usage.outputTokens, usage.cacheReadTokens,
-    usage.latencyMs, messageId,
+    usage.latencyMs, businessId, messageId,
   );
 }
 
+// --- events ---------------------------------------------------------------
+
 const insertEvent = db.prepare(
-  `INSERT INTO events (ts, level, name, detail) VALUES (?, ?, ?, ?)`,
+  `INSERT INTO events (business_id, ts, level, name, detail) VALUES (?, ?, ?, ?, ?)`,
 );
 
+/**
+ * `businessId` is null only for events that happen before any business is
+ * known - a request to a webhook URL that matches no client, for instance.
+ * Those never reach a client's dashboard.
+ */
 export function recordEvent(
+  businessId: BusinessId | null,
   level: "debug" | "info" | "warn" | "error",
   name: string,
   detail?: Record<string, unknown>,
 ): void {
-  insertEvent.run(Date.now(), level, name, detail ? JSON.stringify(detail) : null);
-  publish({ kind: "event", level, name });
+  insertEvent.run(businessId, Date.now(), level, name, detail ? JSON.stringify(detail) : null);
+  if (businessId !== null) publish({ businessId, kind: "event", level, name });
 }

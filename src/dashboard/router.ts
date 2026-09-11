@@ -17,6 +17,16 @@ import {
   listConversations, listEvents, listMessages, listRecentMessages, stats,
 } from "../store/queries.ts";
 import { agentEnabled, clearHandoff, setAgentEnabled } from "../store/db.ts";
+import { DEFAULT_BUSINESS_ID, getBusiness } from "../store/businesses.ts";
+
+/**
+ * Interim: this token-gated dashboard predates multi-tenancy and has no
+ * notion of who is looking, so it is pinned to the default business - every
+ * read, write and live event below is scoped to it, and nothing else. Step 2
+ * replaces the shared token with per-user logins, and the business then
+ * comes from the session.
+ */
+const BID = DEFAULT_BUSINESS_ID;
 
 export const dashboardRouter: Router = Router();
 
@@ -82,28 +92,30 @@ dashboardRouter.get("/dashboard", (_req, res) => {
 });
 
 dashboardRouter.get("/api/stats", (_req, res) => {
+  const business = getBusiness(BID);
   res.json({
-    ...stats(),
-    phoneNumberId: config.whatsapp.phoneNumberId,
-    graphVersion: config.whatsapp.graphVersion,
+    ...stats(BID),
+    businessName: business?.name ?? null,
+    phoneNumberId: business?.waPhoneNumberId ?? null,
+    graphVersion: business?.graphVersion ?? null,
     startedAt: Date.now() - Math.round(process.uptime() * 1000),
   });
 });
 
 dashboardRouter.get("/api/conversations", (_req, res) => {
-  res.json(listConversations());
+  res.json(listConversations(BID));
 });
 
 dashboardRouter.get("/api/conversations/:waId/messages", (req, res) => {
-  res.json(listMessages(req.params.waId));
+  res.json(listMessages(BID, req.params.waId));
 });
 
 dashboardRouter.get("/api/recent", (_req, res) => {
-  res.json(listRecentMessages(50));
+  res.json(listRecentMessages(BID, 50));
 });
 
 dashboardRouter.get("/api/events", (_req, res) => {
-  res.json(listEvents(150));
+  res.json(listEvents(BID, 150));
 });
 
 /**
@@ -113,15 +125,15 @@ dashboardRouter.get("/api/events", (_req, res) => {
  */
 dashboardRouter.post("/api/agent/toggle", (req, res) => {
   const body = req.body as { enabled?: unknown } | undefined;
-  const next = typeof body?.enabled === "boolean" ? body.enabled : !agentEnabled();
+  const next = typeof body?.enabled === "boolean" ? body.enabled : !agentEnabled(BID);
 
-  setAgentEnabled(next);
+  setAgentEnabled(BID, next);
   log.warn("agent_toggled", { enabled: next, via: "dashboard" });
   res.json({ agentEnabled: next });
 });
 
 dashboardRouter.post("/api/conversations/:waId/clear-handoff", (req, res) => {
-  clearHandoff(req.params.waId);
+  clearHandoff(BID, req.params.waId);
   log.info("handoff_cleared", { waId: req.params.waId, via: "dashboard" });
   res.json({ ok: true, waId: req.params.waId });
 });
@@ -137,7 +149,7 @@ dashboardRouter.get("/api/stream", (req, res) => {
   });
   res.write(": connected\n\n");
 
-  const unsubscribe = subscribe((event) => {
+  const unsubscribe = subscribe(BID, (event) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   });
 

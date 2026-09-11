@@ -1,9 +1,14 @@
 /**
  * Read side of the store - everything the dashboard renders. Kept apart from
  * db.ts so the write path stays easy to audit.
+ *
+ * Every query takes a businessId and filters on it, joins included. The easy
+ * one to miss is a correlated subquery: matching a customer by phone number
+ * alone would surface one client's message in another client's inbox when
+ * the same person texts both.
  */
 
-import { agentEnabled, db, WINDOW_MS } from "./db.ts";
+import { agentEnabled, db, WINDOW_MS, type BusinessId } from "./db.ts";
 
 export interface ConversationRow {
   waId: string;
@@ -30,17 +35,20 @@ const conversationsStmt = db.prepare(`
     m.direction AS last_direction
   FROM contacts c
   LEFT JOIN messages m ON m.id = (
-    SELECT id FROM messages WHERE wa_id = c.wa_id ORDER BY rowid DESC LIMIT 1
+    SELECT id FROM messages
+    WHERE business_id = c.business_id AND wa_id = c.wa_id
+    ORDER BY rowid DESC LIMIT 1
   )
+  WHERE c.business_id = ?
   -- Conversations waiting on a person float to the top: that is the queue
   -- someone actually has to work through.
   ORDER BY c.needs_human DESC, COALESCE(c.last_message_ts, 0) DESC
   LIMIT ?
 `);
 
-export function listConversations(limit = 100): ConversationRow[] {
+export function listConversations(businessId: BusinessId, limit = 100): ConversationRow[] {
   const now = Date.now();
-  return conversationsStmt.all(limit).map((r) => {
+  return conversationsStmt.all(businessId, limit).map((r) => {
     const lastInbound = num(r["last_inbound_ts"]);
     return {
       waId: String(r["wa_id"]),
@@ -88,21 +96,21 @@ export interface MessageRow {
 const messagesStmt = db.prepare(`
   SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
          input_tokens, output_tokens, cache_read_tokens, latency_ms
-  FROM messages WHERE wa_id = ? ORDER BY rowid ASC LIMIT ?
+  FROM messages WHERE business_id = ? AND wa_id = ? ORDER BY rowid ASC LIMIT ?
 `);
 
-export function listMessages(waId: string, limit = 500): MessageRow[] {
-  return messagesStmt.all(waId, limit).map(toMessage);
+export function listMessages(businessId: BusinessId, waId: string, limit = 500): MessageRow[] {
+  return messagesStmt.all(businessId, waId, limit).map(toMessage);
 }
 
 const recentStmt = db.prepare(`
   SELECT id, wa_id, direction, type, text, sender_name, ts, status, error,
          input_tokens, output_tokens, cache_read_tokens, latency_ms
-  FROM messages ORDER BY rowid DESC LIMIT ?
+  FROM messages WHERE business_id = ? ORDER BY rowid DESC LIMIT ?
 `);
 
-export function listRecentMessages(limit = 50): MessageRow[] {
-  return recentStmt.all(limit).map(toMessage);
+export function listRecentMessages(businessId: BusinessId, limit = 50): MessageRow[] {
+  return recentStmt.all(businessId, limit).map(toMessage);
 }
 
 function toMessage(r: Record<string, unknown>): MessageRow {
@@ -132,11 +140,11 @@ export interface EventRow {
 }
 
 const eventsStmt = db.prepare(
-  `SELECT id, ts, level, name, detail FROM events ORDER BY ts DESC LIMIT ?`,
+  `SELECT id, ts, level, name, detail FROM events WHERE business_id = ? ORDER BY ts DESC LIMIT ?`,
 );
 
-export function listEvents(limit = 100): EventRow[] {
-  return eventsStmt.all(limit).map((r) => ({
+export function listEvents(businessId: BusinessId, limit = 100): EventRow[] {
+  return eventsStmt.all(businessId, limit).map((r) => ({
     id: num(r["id"]) ?? 0,
     ts: num(r["ts"]) ?? 0,
     level: str(r["level"]) ?? "info",
@@ -146,22 +154,22 @@ export function listEvents(limit = 100): EventRow[] {
 }
 
 const scalar = (sql: string) => db.prepare(sql);
-const totalIn = scalar(`SELECT COUNT(*) AS n FROM messages WHERE direction='in'`);
-const totalOut = scalar(`SELECT COUNT(*) AS n FROM messages WHERE direction='out'`);
-const failedOut = scalar(`SELECT COUNT(*) AS n FROM messages WHERE status='failed'`);
-const contactCount = scalar(`SELECT COUNT(*) AS n FROM contacts`);
-const since = scalar(`SELECT COUNT(*) AS n FROM messages WHERE ts > ?`);
-const eventCount = scalar(`SELECT COUNT(*) AS n FROM events WHERE name = ?`);
+const totalIn = scalar(`SELECT COUNT(*) AS n FROM messages WHERE business_id = ? AND direction='in'`);
+const totalOut = scalar(`SELECT COUNT(*) AS n FROM messages WHERE business_id = ? AND direction='out'`);
+const failedOut = scalar(`SELECT COUNT(*) AS n FROM messages WHERE business_id = ? AND status='failed'`);
+const contactCount = scalar(`SELECT COUNT(*) AS n FROM contacts WHERE business_id = ?`);
+const since = scalar(`SELECT COUNT(*) AS n FROM messages WHERE business_id = ? AND ts > ?`);
+const eventCount = scalar(`SELECT COUNT(*) AS n FROM events WHERE business_id = ? AND name = ?`);
 const tokenTotals = scalar(`
   SELECT COALESCE(SUM(input_tokens),0) AS input,
          COALESCE(SUM(output_tokens),0) AS output,
          COALESCE(SUM(cache_read_tokens),0) AS cached,
          COALESCE(AVG(latency_ms),0) AS latency
-  FROM messages WHERE input_tokens IS NOT NULL
+  FROM messages WHERE business_id = ? AND input_tokens IS NOT NULL
 `);
-const needsHumanCount = scalar(`SELECT COUNT(*) AS n FROM contacts WHERE needs_human = 1`);
+const needsHumanCount = scalar(`SELECT COUNT(*) AS n FROM contacts WHERE business_id = ? AND needs_human = 1`);
 const openWindows = scalar(
-  `SELECT COUNT(*) AS n FROM contacts WHERE COALESCE(last_inbound_ts,0) > ?`,
+  `SELECT COUNT(*) AS n FROM contacts WHERE business_id = ? AND COALESCE(last_inbound_ts,0) > ?`,
 );
 
 export interface Stats {
@@ -189,9 +197,9 @@ const USD_PER_MTOK_IN = 5;
 const USD_PER_MTOK_OUT = 25;
 const USD_PER_MTOK_CACHED = 0.5; // cache reads bill at ~0.1x input
 
-export function stats(): Stats {
+export function stats(businessId: BusinessId): Stats {
   const dayAgo = Date.now() - WINDOW_MS;
-  const tokens = tokenTotals.get() as Record<string, unknown> | undefined;
+  const tokens = tokenTotals.get(businessId) as Record<string, unknown> | undefined;
   const inputTokens = num(tokens?.["input"]) ?? 0;
   const outputTokens = num(tokens?.["output"]) ?? 0;
   const cachedTokens = num(tokens?.["cached"]) ?? 0;
@@ -201,8 +209,8 @@ export function stats(): Stats {
     outputTokens,
     cachedTokens,
     avgLatencyMs: Math.round(num(tokens?.["latency"]) ?? 0),
-    agentEnabled: agentEnabled(),
-    needsHuman: one(needsHumanCount),
+    agentEnabled: agentEnabled(businessId),
+    needsHuman: one(needsHumanCount, businessId),
     estimatedCostUsd: Number(
       (
         (inputTokens / 1e6) * USD_PER_MTOK_IN +
@@ -210,14 +218,14 @@ export function stats(): Stats {
         (cachedTokens / 1e6) * USD_PER_MTOK_CACHED
       ).toFixed(4),
     ),
-    inbound: one(totalIn),
-    outbound: one(totalOut),
-    failed: one(failedOut),
-    contacts: one(contactCount),
-    last24h: one(since, dayAgo),
-    openWindows: one(openWindows, dayAgo),
-    rejectedSignatures: one(eventCount, "invalid_signature"),
-    graphErrors: one(eventCount, "graph_api_error"),
+    inbound: one(totalIn, businessId),
+    outbound: one(totalOut, businessId),
+    failed: one(failedOut, businessId),
+    contacts: one(contactCount, businessId),
+    last24h: one(since, businessId, dayAgo),
+    openWindows: one(openWindows, businessId, dayAgo),
+    rejectedSignatures: one(eventCount, businessId, "invalid_signature"),
+    graphErrors: one(eventCount, businessId, "graph_api_error"),
     uptimeSec: Math.round(process.uptime()),
   };
 }

@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import type Anthropic from "@anthropic-ai/sdk";
 import { generateReply, setClientForTesting, FALLBACK_REPLY, type MessagesClient } from "./claude.ts";
 import { recordInbound, isPaused, clearHandoff } from "../store/db.ts";
-import { seedOrder } from "../store/business.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
+import { DEFAULT_BUSINESS_ID as B } from "../store/businesses.ts";
 
 const usage = {
   input_tokens: 10, output_tokens: 5,
@@ -55,26 +55,25 @@ function seed(waId: string, text: string): void {
     id, from: waId, senderName: "Test", timestamp: new Date(), text,
     raw: { id, from: waId, timestamp: "0", type: "text", text: { body: text } },
   };
-  recordInbound(msg);
+  recordInbound(B, msg);
 }
 
 after(() => setClientForTesting(undefined));
 
 test("a tool call is executed and its result fed back", async () => {
   const wa = "18000000001";
-  const order = seedOrder("L1001", wa, "shipped", "Blue widget x2");
-  seed(wa, `where is order ${order}?`);
+  seed(wa, "when are you open?");
 
   const { client, sent } = scripted([
-    wantsTool("lookup_order", { order_id: order }),
-    says("Your order L1001 has shipped and should arrive tomorrow."),
+    wantsTool("get_business_info", {}),
+    says("We're open Monday to Friday, 8am to 3pm."),
   ]);
   setClientForTesting(client);
 
-  const result = await generateReply(wa, "Test");
+  const result = await generateReply(B, wa, "Test");
 
   assert.equal(result.ok, true);
-  assert.match(result.text, /shipped/);
+  assert.match(result.text, /Monday to Friday/);
   assert.equal(sent.length, 2, "one call to ask for the tool, one to answer");
 
   // The second request must carry the assistant turn and the tool result.
@@ -87,18 +86,20 @@ test("a tool call is executed and its result fed back", async () => {
   const blocks = resultTurn?.content as Anthropic.ToolResultBlockParam[];
   assert.equal(blocks[0]?.type, "tool_result");
   assert.equal(blocks[0]?.tool_use_id, "tu_1");
+  // The result carries THIS business's facts, not a global constant.
+  assert.match(String(blocks[0]?.content), /Ninja Co/);
 });
 
 test("usage is summed across every call in the turn, not just the last", async () => {
   const wa = "18000000002";
-  seed(wa, "check my order");
+  seed(wa, "what are your hours?");
   const { client } = scripted([
-    wantsTool("lookup_order", { order_id: "L1001" }),
+    wantsTool("get_business_info", {}),
     says("All done."),
   ]);
   setClientForTesting(client);
 
-  const result = await generateReply(wa, "Test");
+  const result = await generateReply(B, wa, "Test");
   assert.equal(result.usage?.inputTokens, 20, "two calls at 10 input tokens each");
   assert.equal(result.usage?.outputTokens, 10);
 });
@@ -118,7 +119,7 @@ test("parallel tool calls all return in a single user message", async () => {
 
   const { client, sent } = scripted([parallel, says("Here you go.")]);
   setClientForTesting(client);
-  await generateReply(wa, "Test");
+  await generateReply(B, wa, "Test");
 
   const second = sent[1]!.messages;
   const resultTurn = second[second.length - 1];
@@ -136,10 +137,10 @@ test("escalation is reported back to the caller", async () => {
   ]);
   setClientForTesting(client);
 
-  const result = await generateReply(wa, "Test");
+  const result = await generateReply(B, wa, "Test");
   assert.equal(result.handoff, true);
-  assert.equal(isPaused(wa), true);
-  clearHandoff(wa);
+  assert.equal(isPaused(B, wa), true);
+  clearHandoff(B, wa);
 });
 
 test("a model that only ever asks for tools is cut off, not looped forever", async () => {
@@ -149,7 +150,7 @@ test("a model that only ever asks for tools is cut off, not looped forever", asy
   const { client, sent } = scripted([wantsTool("get_business_info", {})]);
   setClientForTesting(client);
 
-  const result = await generateReply(wa, "Test");
+  const result = await generateReply(B, wa, "Test");
 
   assert.equal(result.ok, false);
   assert.equal(result.text, FALLBACK_REPLY);

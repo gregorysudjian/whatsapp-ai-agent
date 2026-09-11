@@ -4,6 +4,7 @@
  */
 
 import crypto from "node:crypto";
+import { parseKey } from "./security/crypto.ts";
 
 /**
  * Credential env vars that are present but empty are worse than absent.
@@ -36,16 +37,6 @@ export function pruneEmptyCredentials(
 
 /** Runs at import, before any SDK client is constructed. */
 export const prunedCredentials = pruneEmptyCredentials();
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value || value.trim() === "") {
-    throw new Error(
-      `Missing required env var ${name}. Copy .env.example to .env and fill it in.`,
-    );
-  }
-  return value.trim();
-}
 
 function optional(name: string, fallback: string): string {
   const value = process.env[name];
@@ -85,11 +76,29 @@ export const config = {
     ),
   },
 
-  whatsapp: {
-    phoneNumberId: required("WHATSAPP_PHONE_NUMBER_ID"),
-    accessToken: required("WHATSAPP_ACCESS_TOKEN"),
-    verifyToken: required("WHATSAPP_VERIFY_TOKEN"),
-    appSecret: required("WHATSAPP_APP_SECRET"),
+  security: {
+    /**
+     * Required, and parsed at boot: every stored WhatsApp credential is
+     * encrypted with it, so running without one would either fail on the
+     * first message or tempt a plaintext fallback. Neither is acceptable.
+     */
+    encryptionKey: parseKey(process.env["APP_ENCRYPTION_KEY"]),
+  },
+
+  /**
+   * Seed for the DEFAULT business only, and optional.
+   *
+   * Credentials now live per business in the database, encrypted. These env
+   * vars exist so an install that predates multi-tenancy keeps working: at
+   * boot they create or refresh the default business. New clients are added
+   * through the admin panel (or `npm run business`), never through env.
+   */
+  seedWhatsapp: {
+    phoneNumberId: optional("WHATSAPP_PHONE_NUMBER_ID", ""),
+    businessAccountId: optional("WHATSAPP_BUSINESS_ACCOUNT_ID", ""),
+    accessToken: optional("WHATSAPP_ACCESS_TOKEN", ""),
+    verifyToken: optional("WHATSAPP_VERIFY_TOKEN", ""),
+    appSecret: optional("WHATSAPP_APP_SECRET", ""),
     graphVersion: optional("GRAPH_API_VERSION", "v23.0"),
   },
 } as const;
@@ -97,9 +106,11 @@ export const config = {
 /**
  * Overridable so the suite can point the client at a local mock and exercise
  * sending, chunking, wamid capture and retry over a real socket. Unset in
- * production, where it resolves to the real Graph host.
+ * production, where each business's own Graph version is used.
  */
-export const graphBaseUrl = optional(
-  "GRAPH_BASE_URL",
-  `https://graph.facebook.com/${config.whatsapp.graphVersion}`,
-);
+export const graphBaseOverride: string | undefined =
+  process.env["GRAPH_BASE_URL"]?.trim() || undefined;
+
+export function graphBaseFor(graphVersion: string): string {
+  return graphBaseOverride ?? `https://graph.facebook.com/${graphVersion}`;
+}
