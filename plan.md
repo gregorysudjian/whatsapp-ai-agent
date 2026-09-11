@@ -599,5 +599,8 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D13, retention** deletes messages/events by timestamp, bookings by end time (business-local),
   and contacts with nothing left; the audit trail is kept 24 months platform-wide. Erasure also
   redacts the number from the audit log and records `contact_erased` with the last 4 digits.
+- **D14, automatic backup before a schema change** at boot (VACUUM INTO data/backups/), plus
+  `npm run backup`. `npm start` uses `--env-file-if-exists`. The Dockerfile is untested (no
+  Docker on this machine).
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

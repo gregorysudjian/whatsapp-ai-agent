@@ -1,0 +1,14 @@
+# Never in the image: secrets, conversation data, local builds and dependencies.
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+node_modules/
+web/node_modules/
+dist/
+web/dist/
+.git/
+*.log

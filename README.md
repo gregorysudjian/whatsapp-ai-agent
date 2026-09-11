@@ -231,3 +231,10 @@ The agent layer never sees WhatsApp payload shapes - `webhook.ts` normalizes to
 - **The dashboard's event bus is in-process.** One instance sees its own writes
   only; run several and each dashboard shows just its own traffic. A shared bus
   (Redis pub/sub) is the fix if this ever runs multi-instance.
+
+## Deploying
+
+A `Dockerfile` builds one image with the agent and the dashboard; `docs/deploy.md` walks through
+a Canadian VM, HTTPS with Caddy, secrets, backups, and connecting each client's Meta webhook.
+Other guides: `docs/whatsapp-templates.md` (reminder templates for Meta) and
+`docs/google-calendar-setup.md` (Google Calendar).

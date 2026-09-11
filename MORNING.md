@@ -40,7 +40,7 @@ Then delete that file.
 | D11 | Monthly PDF report | ✅ done — one page per month in the business's language; the current month is reported to date |
 | D8 | Google Calendar | ✅ built and tested against a mock Google — needs your one-time Google Cloud setup to use for real |
 | D13 | Law 25 hardening | ✅ done — retention with nightly clean-up, erase a customer, AI notice on first contact, header/cookie review, npm audit clean |
-| D14 | Deploy-ready | not started |
+| D14 | Deploy-ready | ✅ done — Dockerfile, `npm start` from the build, backups, docs/deploy.md for a Canadian server (not deployed) |
 
 ---
 
@@ -254,6 +254,18 @@ Also tightened for deployment: no `X-Powered-By` header; a Permissions-Policy; H
 are now actually cleaned up (they weren't); the boot log warns if production runs without
 `COOKIE_SECURE=1` / `TRUST_PROXY=1`. **`npm audit`: 0 vulnerabilities** in both the server and
 the dashboard.
+
+### D14 — Ready to deploy (not deployed)
+- **[docs/deploy.md](docs/deploy.md)**: a Canadian VM (Québec or Toronto), Docker, HTTPS with
+  Caddy, secrets, nightly backups, and connecting each client's Meta webhook. It also flags a
+  Law 25 point for your privacy policies: conversations pass through Meta and Anthropic outside
+  Québec.
+- `npm run build:all` then `npm start` runs the compiled server (checked tonight: health, the
+  dashboard and the API answer; it no longer needs a `.env` file if the variables are set).
+- `npm run backup` makes a consistent copy of the database into `data/backups/`, and the server
+  now backs the database up by itself before any upgrade that changes its structure.
+- The **Dockerfile** could not be test-built here (Docker isn't installed on this PC); build it
+  once on the server before relying on it.
 
 ---
 

@@ -29,6 +29,19 @@ export const db = new DatabaseSync(config.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 5000");
 
+// Before a schema change, a copy of the database as it was: an upgrade that
+// goes wrong can then be undone by putting the file back.
+{
+  const version = Number((db.prepare("PRAGMA user_version").get() as Record<string, unknown>)["user_version"]);
+  if (version > 0 && version < SCHEMA_VERSION) {
+    const dir = path.join(path.dirname(config.dbPath), "backups");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `agent-before-schema-${SCHEMA_VERSION}-${Date.now()}.db`);
+    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    log.info("pre_migration_backup", { from: version, to: SCHEMA_VERSION, file });
+  }
+}
+
 const applied = migrate(db);
 log.info("store_ready", {
   path: config.dbPath,
