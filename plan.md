@@ -613,3 +613,6 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   totals that shrink when old messages are purged.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.
+- **After the run (2026-09-11), at the owner's request:** super admin is now
+  **gregory.sudjian@gmail.com** (created with a one-time password, forced change at first
+  sign-in); admin@example.com is deactivated, kept only so the audit history stays whole.

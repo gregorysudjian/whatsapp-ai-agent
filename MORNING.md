@@ -33,7 +33,7 @@ npm run build:web      # builds the dashboard
 npm run dev            # starts the server on http://localhost:3001
 ```
 
-Sign in as **admin@example.com** with the password in `data/initial-credentials.txt`.
+Sign in as **gregory.sudjian@gmail.com** (the one-time password was given to you in chat; you choose your own at first sign-in).
 You'll be asked to choose a new one first. Then delete that file.
 
 **A 10-minute tour, in this order:** Overview → Inbox → Bookings (click an empty time to book) →
@@ -75,7 +75,7 @@ separate throwaway database.
 ### D2 — Login and roles
 Two accounts exist in your real database; their one-time passwords are in
 `data/initial-credentials.txt` (never committed, never printed in logs):
-- **admin@example.com** — super admin, sees every business.
+- **gregory.sudjian@gmail.com** — super admin, sees every business (replaced the first account, admin@example.com, which is now deactivated).
 - **owner@ninjaco.test** — owner of Ninja Co only.
 
 Both must change their password at first login. Until then they can see
@@ -213,7 +213,7 @@ themselves `=HYPERLINK(...)` on WhatsApp can't run a formula on your computer (s
 defused). Every export is recorded in the audit log.
 
 ### D12 — Admin panel (super admin only)
-Signed in as **admin@example.com**, the sidebar has an **Admin** section.
+Signed in as **gregory.sudjian@gmail.com**, the sidebar has an **Admin** section.
 1. **Clients**: every business, whether its WhatsApp is connected, its owners, and this month's
    messages and model cost. **New client** creates one (name, timezone, language).
 2. Click a client → its panel:
