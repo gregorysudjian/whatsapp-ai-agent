@@ -10,7 +10,17 @@ git history (`git show b08ac69:MORNING.md`).
 
 ## 1. Start here
 
-*(Filled in once the new dashboard exists.)*
+```
+npm run build:web      # builds the dashboard (once, and after each update)
+npm run dev            # starts the server on http://localhost:3001
+```
+
+Open **http://localhost:3001** and sign in as **admin@example.com** with the
+password in `data/initial-credentials.txt`. You'll be asked to choose a new one first.
+Then delete that file.
+
+> The server now uses port **3001**, not 3000: your `.env` said 3000, which is where your
+> AI Lead Agent project runs, so the two would have collided. I changed that one value.
 
 ---
 
@@ -19,7 +29,7 @@ git history (`git show b08ac69:MORNING.md`).
 | Step | What | State |
 |---|---|---|
 | D2 | Login and roles | ✅ done — accounts, sessions, audit log, route-table authorization test |
-| D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | not started |
+| D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | ✅ done — sign-in, forced password change, layout, overview tiles |
 | D4 | Agent settings → system prompt | not started |
 | D5 | Inbox with human takeover | not started |
 | D6 | Bookings v2 and bookings page | not started |
@@ -56,6 +66,20 @@ minutes; the same error for "wrong password" and "no such account"; a password c
 logs out every other device. `src/auth/authz.test.ts` walks every dashboard route and
 proves an owner of one business gets "not found" for another's — it was checked by
 deliberately breaking the guard four different ways.
+
+### D3 — The new dashboard
+1. Open http://localhost:3001 → the sign-in page (EN/FR and light/dark/system toggles top right).
+2. Sign in as the super admin → you must choose a new password (your first sign-in).
+3. You land on **Ninja Co → Overview**: message counts, contacts, chats waiting for a person.
+4. Top bar: the business switcher (only super admins see it). Sidebar footer: language,
+   theme, change password, sign out. The arrow on the sidebar edge collapses it.
+5. Narrow the window below ~1000px: the sidebar becomes a menu button, and a bottom bar
+   appears with Overview / Messages / Bookings / More.
+6. Sign out, sign in as **owner@ninjaco.test**: no switcher and no Admin section. Type
+   `/b/2/overview` into the address bar → "Page not found" (that's Test Clinic, not theirs).
+
+Pages not built yet say "Coming in this build". Everything is translated; a test fails if
+any French string is missing, blank, or just the English pasted in.
 
 ---
 

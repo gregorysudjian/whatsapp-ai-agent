@@ -14,6 +14,7 @@ import {
 import { authRouter } from "./auth/routes.ts";
 import { businessRouter } from "./api/business.ts";
 import { adminRouter } from "./api/admin.ts";
+import { webApp } from "./web.ts";
 
 export function createApp(): express.Express {
   const app = express();
@@ -50,6 +51,11 @@ export function createApp(): express.Express {
   app.use("/api/admin", requireAuth, requireSuperAdmin, adminRouter);
 
   app.use(dashboardRouter);
+  // After every real /api route (the legacy dashboard's included): an unknown
+  // /api path is a JSON 404, not the app's HTML shell.
+  app.use("/api", (_req, res) => { res.status(404).json({ error: "not_found" }); });
+  // Last: the built dashboard, and its client-side routes.
+  app.use(webApp());
 
   log.debug("app_created");
   return app;

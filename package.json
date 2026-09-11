@@ -9,14 +9,18 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc -p tsconfig.build.json",
+    "build:web": "npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev",
+    "build:all": "npm run build && npm run build:web",
     "start": "node --env-file=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "pretest": "node -e \"for (const f of ['data/test.db','data/test.db-wal','data/test.db-shm']) require('fs').rmSync(f,{force:true})\"",
     "fake-webhook": "tsx --env-file=.env src/testing/cli-webhook.ts",
     "business": "tsx --env-file=.env src/cli/business.ts",
     "user": "tsx --env-file=.env src/cli/user.ts",
+    "shots": "node --env-file=.env.test src/testing/shots.ts",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
-    "test": "node --env-file=.env.test --import ./src/testing/setup.ts --test --test-concurrency=1 --test-reporter=spec \"src/**/*.test.ts\""
+    "test": "node --env-file=.env.test --import ./src/testing/setup.ts --test --test-concurrency=1 --test-reporter=spec \"src/**/*.test.ts\" \"web/src/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",

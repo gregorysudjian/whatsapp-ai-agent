@@ -511,3 +511,14 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   I'll change them later") — USD 25 robotics / USD 20 coding, 60 min each; agent languages
   Arabic, French, English; no human contact for handoffs; npm packages approved.
   Settings `languages` therefore accepts any ISO 639-1 code, not just en/fr.
+- **D3, versions:** React Router's latest is now **8.x** and TypeScript's **7.x** (a
+  native rewrite). Pinned **react-router 7.18.3** and **typescript 5.9.3** instead: the
+  plan was written for Router 7, the backend already uses TS 5, and an unattended night is
+  the wrong time to learn a new major API. *Reverse:* bump both in `web/package.json` and fix
+  what breaks.
+- **D3, port:** `.env` had `PORT=3000`, which collides with the owner's AI Lead Agent
+  project. Changed to `PORT=3001`, the port used throughout. *Reverse:* set it back and
+  stop the other project first.
+- **D3, screenshots:** built `src/testing/screenshot.ts` on CDP with Node's built-in
+  WebSocket (no Playwright), plus `npm run shots`, which runs on its own throwaway
+  database (`data/shots.db`) with demo data, never the live one.
