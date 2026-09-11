@@ -1,25 +1,51 @@
 # Good morning
 
-This file is updated after every step of the overnight run, so it is accurate even if the run
-stopped early. The plan it followed is [plan.md](plan.md). Last night's earlier report is in
+This file was updated after every step of the overnight run. The plan it followed is
+[plan.md](plan.md) (its section 10 logs every decision I made on my own). An earlier report is in
 git history (`git show b08ac69:MORNING.md`).
 
-**Run status:** 🔄 in progress — started 2026-09-11.
+**Run status:** ✅ done — every step of the plan (D2–D14) is built, tested and committed, plus fixes
+from an independent code review at the end. **269 automated tests pass.** The server is running on
+http://localhost:3001.
+
+**In one paragraph:** the dashboard is complete. You sign in with your own password. Owners see
+only their business. You see every business, plus an admin panel for clients, credentials, owner
+accounts, usage and billing, and the audit log.
+
+It has:
+- a live WhatsApp-style **Inbox**, where a person can take a chat over from the agent and hand it back;
+- **Bookings** with services, a week calendar and no double-booking;
+- **Reminders** with Confirm and Cancel buttons (off until Meta approves your template);
+- **Overview** charts, **Contacts** with a CSV export, and a monthly **PDF report**;
+- **Google Calendar** sync (needs a 10-minute setup on your side);
+- the **Québec Law 25** tools: retention, erasing a customer, and an "automated assistant" notice.
+
+Nothing was sent to real customers tonight. Everything outside this computer was mocked in tests.
 
 ---
 
 ## 1. Start here
 
+The server should already be running. If http://localhost:3001 doesn't open:
+
 ```
-npm run build:web      # builds the dashboard (once, and after each update)
+npm run build:web      # builds the dashboard
 npm run dev            # starts the server on http://localhost:3001
 ```
 
-Open **http://localhost:3001** and sign in as **admin@example.com** with the
-password in `data/initial-credentials.txt`. You'll be asked to choose a new one first.
-Then delete that file.
+Sign in as **admin@example.com** with the password in `data/initial-credentials.txt`.
+You'll be asked to choose a new one first. Then delete that file.
 
-> The server now uses port **3001**, not 3000: your `.env` said 3000, which is where your
+**A 10-minute tour, in this order:** Overview → Inbox → Bookings (click an empty time to book) →
+Contacts → Agent settings (every tab, including Reminders, Google Calendar and Privacy) → Reports
+(download a PDF) → Admin → Clients (open Ninja Co) → Usage & billing → Audit log. Then sign out and
+sign in as **owner@ninjaco.test** to see what an owner sees.
+
+Your real database has almost no traffic yet (2 messages). The pages will look empty until
+customers write in. The screenshots I checked were taken on a month of made-up demo traffic, in a
+separate throwaway database.
+
+> The server uses port **3001**, not 3000: your `.env` said 3000, which is where your
 > AI Lead Agent project runs, so the two would have collided. I changed that one value.
 
 ---
@@ -280,6 +306,9 @@ the dashboard.
    connect it in Agent settings → Google Calendar.
 4. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
 5. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
+6. **Before deploying:** read [docs/deploy.md](docs/deploy.md), and add Meta and Anthropic as data
+   processors to each client's privacy policy (Law 25: conversations leave Québec through them).
+7. You can delete `DASHBOARD_TOKEN` from `.env`; it's no longer used.
 
 ---
 
@@ -299,9 +328,24 @@ the dashboard.
 - **D6:** one booking at a time per business (a single room or teacher). A business that runs
   two classes at once would need a "capacity" per service; not built.
 - **D6:** the bookings page refreshes when you come back to the tab, not live while you watch it.
+- **D11:** the PDF font has no Arabic letters (a business *name* in Arabic wouldn't print).
+- **D14:** the Dockerfile wasn't test-built (no Docker on this PC).
+- **Media / voice notes** are still not understood by the agent (it says so to the customer).
 
 ---
 
-## 6. Bugs found in earlier work
+## 6. Bugs found in earlier work (all fixed)
 
-*(Filled in as the run goes.)*
+- **Expired sessions were never deleted:** the clean-up function existed, but nothing called it.
+  It now runs with the retention job.
+- **An AI reply could land on top of a person:** if someone took a chat over while the model was
+  still writing, the stale reply was sent anyway. Now it's dropped.
+- **The server advertised "Express"** in every response, and trusted the development origin in
+  production. Both fixed.
+- **Settings tabs on a phone:** a link to a later tab didn't scroll it into view.
+- **The "not connected" badge** squeezed into the phone header, where it was meant to be hidden.
+- Found in tonight's own work and fixed before committing (details in the git log):
+  - a time picker that loaded forever;
+  - a report comparing 11 days with 30;
+  - a Google error message being overwritten;
+  - invisible characters in two files.
