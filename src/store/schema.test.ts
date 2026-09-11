@@ -158,3 +158,36 @@ test("after migration, a row without a business is refused", () => {
     fs.rmSync(file, { force: true });
   }
 });
+
+test("migration 4 turns old facts into v2 settings, placeholders into blanks", () => {
+  // A database exactly as schema 3 left it, holding a v1 facts document.
+  const { db, file } = tempDb();
+  try {
+    migrate(db);
+    db.exec(`DROP TABLE services; PRAGMA user_version = 3;`);
+    db.prepare(`UPDATE businesses SET default_language = 'fr' WHERE id = 1`).run();
+    db.prepare(`INSERT INTO business_settings (business_id, facts, schedule, updated_at) VALUES (1, ?, '{}', 1)`).run(JSON.stringify({
+      name: "Ninja Co",
+      what: "Robotics and coding tutoring",
+      hours: "Monday to Friday, 8am to 3pm.",
+      address: "Beirut, Lebanon",
+      contact: "Not provided yet - offer to pass the question to a human",
+      neverDo: ["promise a refund", "claim an order has shipped"],
+    }));
+
+    assert.deepEqual(migrate(db), [4]);
+    const v2 = JSON.parse((db.prepare(`SELECT facts FROM business_settings WHERE business_id = 1`).get() as { facts: string }).facts);
+
+    assert.equal(v2.about, "Robotics and coding tutoring");
+    assert.equal(v2.address, "Beirut, Lebanon");
+    assert.equal(v2.contact, "", "a placeholder must not survive as text the agent could quote");
+    assert.equal(v2.hours, undefined, "free-text hours are gone; the schedule is the only source");
+    assert.deepEqual(v2.neverDo, ["promise a refund"], "order rules go with the orders feature");
+    assert.deepEqual(v2.languages, ["fr"], "starts from the business's own language");
+    assert.equal(v2.reminders.enabled, false);
+    assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'services'`).get(), "services table created");
+  } finally {
+    db.close();
+    fs.rmSync(file, { force: true });
+  }
+});

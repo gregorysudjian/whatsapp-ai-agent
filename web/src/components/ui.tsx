@@ -3,7 +3,7 @@
  * a dozen components is not worth a component library's setup and weight.
  */
 
-import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import React, { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -39,7 +39,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       className={cx(
         "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-60",
-        size === "sm" ? "h-8 px-3 text-sm" : "h-10 px-4 text-sm",
+        // Minimum heights, not fixed ones: a label that wraps (French runs
+        // long) grows the button instead of spilling out of it.
+        size === "sm" ? "min-h-8 px-3 py-1 text-sm" : "min-h-10 px-4 py-2 text-sm",
         variants[variant],
         className,
       )}
@@ -157,4 +159,62 @@ export function Alert({ tone = "red", children }: { tone?: "red" | "amber" | "gr
     blue: "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200",
   }[tone];
   return <div role={tone === "red" ? "alert" : "status"} className={cx("rounded-lg border px-3 py-2.5 text-sm", styles)}>{children}</div>;
+}
+
+// --- More form controls -----------------------------------------------------
+
+const controlBase =
+  "block w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 shadow-sm " +
+  "placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-600/40 " +
+  "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+
+interface LabelledProps { label: string; hint?: string | undefined; className?: string | undefined; children: (id: string, describedBy: string | undefined) => ReactNode }
+
+function Labelled({ label, hint, className, children }: LabelledProps) {
+  const id = useId();
+  return (
+    <div className={cx("space-y-1.5", className)}>
+      <label htmlFor={id} className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{label}</label>
+      {children(id, hint ? `${id}-hint` : undefined)}
+      {hint && <p id={`${id}-hint`} className="text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>}
+    </div>
+  );
+}
+
+export function TextArea({ label, hint, className, rows = 3, ...rest }:
+  { label: string; hint?: string; className?: string } & React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <Labelled label={label} hint={hint} className={className}>
+      {(id, d) => <textarea id={id} aria-describedby={d} rows={rows} className={cx(controlBase, "py-2 leading-relaxed")} {...rest} />}
+    </Labelled>
+  );
+}
+
+export function Select({ label, hint, className, children, ...rest }:
+  { label: string; hint?: string; className?: string; children: ReactNode } & React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <Labelled label={label} hint={hint} className={className}>
+      {(id, d) => <select id={id} aria-describedby={d} className={cx(controlBase, "h-10 pr-8")} {...rest}>{children}</select>}
+    </Labelled>
+  );
+}
+
+/** An on/off switch with its label - a real checkbox underneath, so it is keyboard- and screen-reader-native. */
+export function Switch({ checked, onChange, label, hint, disabled }:
+  { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }) {
+  const id = useId();
+  return (
+    <label htmlFor={id} className={cx("flex items-start gap-3", disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+      <span className="relative mt-0.5 inline-flex shrink-0">
+        <input id={id} type="checkbox" role="switch" className="peer sr-only" checked={checked} disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)} />
+        <span className="h-6 w-11 rounded-full bg-zinc-300 transition-colors peer-checked:bg-brand-600 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-600/50 peer-focus-visible:ring-offset-2 dark:bg-zinc-700 dark:peer-focus-visible:ring-offset-zinc-900" />
+        <span className="absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{label}</span>
+        {hint && <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{hint}</span>}
+      </span>
+    </label>
+  );
 }

@@ -23,7 +23,7 @@ import { createApp } from "../app.ts";
 import { businessRouter } from "../api/business.ts";
 import { adminRouter } from "../api/admin.ts";
 import { call, makeUser, type TestUser } from "../testing/auth.ts";
-import { createBusiness, DEFAULT_BUSINESS_ID } from "../store/businesses.ts";
+import { createBusiness } from "../store/businesses.ts";
 
 interface RouteInfo { method: string; path: string }
 
@@ -48,10 +48,13 @@ let base: string;
 let app: ReturnType<typeof createApp>;
 let ownerA: TestUser;
 let admin: TestUser;
-const A = DEFAULT_BUSINESS_ID;
+// Both businesses are created here, not borrowed: this file calls every route
+// for real - DELETEs included - and must not change data other test files use.
+let A: number;
 let B: number;
 
 before(async () => {
+  A = createBusiness({ name: "Authz Business A" }).id;
   B = createBusiness({ name: "Authz Other Business" }).id;
   ownerA = await makeUser("owner", A);
   admin = await makeUser("super_admin");

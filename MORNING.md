@@ -30,7 +30,7 @@ Then delete that file.
 |---|---|---|
 | D2 | Login and roles | ✅ done — accounts, sessions, audit log, route-table authorization test |
 | D3 | Dashboard shell (sidebar, dark mode, EN/FR, mobile) | ✅ done — sign-in, forced password change, layout, overview tiles |
-| D4 | Agent settings → system prompt | not started |
+| D4 | Agent settings → system prompt | ✅ done — 8-tab settings page, services with prices, live prompt preview |
 | D5 | Inbox with human takeover | not started |
 | D6 | Bookings v2 and bookings page | not started |
 | D7 | Reminders and confirmations | not started |
@@ -78,7 +78,23 @@ deliberately breaking the guard four different ways.
 6. Sign out, sign in as **owner@ninjaco.test**: no switcher and no Admin section. Type
    `/b/2/overview` into the address bar → "Page not found" (that's Test Clinic, not theirs).
 
-Pages not built yet say "Coming in this build". Everything is translated; a test fails if
+Pages not built yet say "Coming in this build".
+
+### D4 — Agent settings
+**Agent settings** in the sidebar. Everything here is what the agent is told; changes apply
+from the next customer message.
+1. **Business** — name, description, timezone (Ninja Co: Asia/Beirut), address, and the contact
+   given on handoff (empty, as you chose: the agent says someone will follow up in the chat).
+2. **Hours** — a switch and times per day. Ninja Co: Monday–Friday 08:00–15:00. Change one,
+   press **Save changes** (the bar appears at the bottom when something changed).
+3. **Services** — Robotics class and Coding class with the placeholder prices. **Edit** one;
+   leave the price empty and the agent will say it doesn't have a price.
+4. **FAQs**, **Tone & languages** (English, French and Arabic are on), **Handoff** rules.
+5. **What the agent sees** — the exact text the agent gets, generated from all of the above.
+   Change the hours, save, come back here: the hours line changes with it.
+
+The agent now also knows today's date and time in Beirut, so "tomorrow at 10" works — it
+had no way to know what day it was before. Everything is translated; a test fails if
 any French string is missing, blank, or just the English pasted in.
 
 ---
@@ -87,7 +103,7 @@ any French string is missing, blank, or just the English pasted in.
 
 1. **Replace Ninja Co's placeholder prices.** You said "put anything now": Robotics USD 25 and
    Coding USD 20 (60 min each) are made up. The agent quotes prices to real customers, so change
-   them before the bot goes live.
+   them before the bot goes live: **Agent settings → Services → Edit**.
 2. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
 3. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
 

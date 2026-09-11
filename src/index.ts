@@ -1,8 +1,8 @@
 import { config, prunedCredentials } from "./config.ts";
 import { log } from "./logger.ts";
 import { createApp } from "./app.ts";
-import { isConfigured } from "./agent/persona.ts";
-import { getFacts, listBusinesses, seedDefaultBusiness } from "./store/businesses.ts";
+import { listBusinesses, seedDefaultBusiness } from "./store/businesses.ts";
+import { getSettings, isConfigured } from "./store/settings.ts";
 
 // Before the app starts taking webhooks: carries a pre-multi-tenancy install's
 // env credentials and hardcoded facts into business #1.
@@ -36,7 +36,7 @@ app.listen(config.port, () => {
       status: b.status,
       webhook: `/webhook/b/${b.publicId}`,
       connected: b.hasCredentials,
-      ...(isConfigured(getFacts(b.id)) ? {} : { warning: "facts not configured - agent will not state hours or prices" }),
+      ...(isConfigured(getSettings(b.id)) ? {} : { warning: "settings not filled in - the agent does not know what this business does" }),
     });
   }
 

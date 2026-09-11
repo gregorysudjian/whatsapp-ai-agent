@@ -522,3 +522,9 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D3, screenshots:** built `src/testing/screenshot.ts` on CDP with Node's built-in
   WebSocket (no Playwright), plus `npm run shots`, which runs on its own throwaway
   database (`data/shots.db`) with demo data, never the live one.
+- **D4, services:** removing a service always *deactivates* it (never deletes), even before
+  bookings reference services in D6 - simpler, and history-preserving. *Reverse:* a hard
+  delete for services with no bookings.
+- **D4, the clock:** the agent had no idea of the current date, so relative dates ("tomorrow")
+  could not be resolved. Added a second system block with the business-local date and time,
+  placed after the cache breakpoint so the cached prefix stays byte-stable.

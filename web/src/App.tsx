@@ -8,6 +8,7 @@ import { AppLayout } from "./layout/AppLayout.tsx";
 import { Login } from "./pages/Login.tsx";
 import { ChangePassword } from "./pages/ChangePassword.tsx";
 import { Overview } from "./pages/Overview.tsx";
+import { Settings } from "./pages/Settings.tsx";
 import { NotFound, Placeholder } from "./pages/Placeholder.tsx";
 
 /** Signed in, password settled - or sent where they need to go. */
@@ -71,7 +72,7 @@ export function App() {
                   <Route path="inbox" element={<RequireBusiness><Placeholder title="nav.inbox" /></RequireBusiness>} />
                   <Route path="bookings" element={<RequireBusiness><Placeholder title="nav.bookings" /></RequireBusiness>} />
                   <Route path="contacts" element={<RequireBusiness><Placeholder title="nav.contacts" /></RequireBusiness>} />
-                  <Route path="settings" element={<RequireBusiness><Placeholder title="nav.settings" /></RequireBusiness>} />
+                  <Route path="settings" element={<RequireBusiness><Settings /></RequireBusiness>} />
                   <Route path="reports" element={<RequireBusiness><Placeholder title="nav.reports" /></RequireBusiness>} />
                   <Route path="*" element={<NotFound />} />
                 </Route>

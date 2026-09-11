@@ -299,6 +299,72 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX audit_by_user     ON audit_log (user_id, ts DESC);
     `);
   },
+
+  /**
+   * 4 - services, and agent settings v2.
+   *
+   * Services get a table so bookings can reference a stable id. The settings
+   * JSON moves from the old "facts" shape to v2 in place. Two rules matter:
+   * placeholders like "<not configured>" or "Not provided yet - ..." become
+   * empty fields rather than surviving as text the agent might quote, and the
+   * old free-text hours are dropped - hours now come only from the schedule,
+   * so a sentence and a schedule can never disagree again.
+   *
+   * Self-contained on purpose: a migration must not import app code whose
+   * shape will keep changing after the migration is written.
+   */
+  (db) => {
+    db.exec(`
+      CREATE TABLE services (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_id  INTEGER NOT NULL REFERENCES businesses(id),
+        name         TEXT NOT NULL,
+        description  TEXT NOT NULL DEFAULT '',
+        duration_min INTEGER NOT NULL CHECK (duration_min > 0),
+        price_cents  INTEGER CHECK (price_cents IS NULL OR price_cents >= 0),
+        currency     TEXT NOT NULL DEFAULT 'CAD',
+        active       INTEGER NOT NULL DEFAULT 1,
+        sort         INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL
+      );
+      CREATE INDEX services_by_business ON services (business_id, active, sort);
+    `);
+
+    const placeholder = (v: unknown) =>
+      typeof v !== "string" || v.trim() === "" || v.trim().startsWith("<") || /^not provided/i.test(v.trim());
+    const clean = (v: unknown) => (placeholder(v) ? "" : String(v).trim());
+
+    const rows = db.prepare(`
+      SELECT s.business_id, s.facts, b.default_language
+      FROM business_settings s JOIN businesses b ON b.id = s.business_id
+    `).all() as { business_id: number; facts: string; default_language: string }[];
+    const update = db.prepare(`UPDATE business_settings SET facts = ? WHERE business_id = ?`);
+
+    for (const r of rows) {
+      const v1 = JSON.parse(r.facts) as Record<string, unknown>;
+      if (v1["version"] === 2) continue;
+      const neverDo = Array.isArray(v1["neverDo"])
+        ? (v1["neverDo"] as unknown[]).map(String).filter((x) => !/\border\b/i.test(x)) // orders are gone
+        : [];
+      const v2 = {
+        about: clean(v1["what"]),
+        address: clean(v1["address"]),
+        contact: clean(v1["contact"]),
+        tone: "friendly",
+        customToneNotes: "",
+        languages: [r.default_language === "fr" ? "fr" : "en"],
+        faqs: [],
+        handoff: { keywords: [], onAnger: true, onAccountChange: true, rules: "" },
+        neverDo: neverDo.length ? neverDo : [
+          "promise a refund, discount, or delivery date",
+          "quote a price that is not listed in the services",
+        ],
+        reminders: { enabled: false, hoursBefore: 24, templateName: "appointment_reminder", templateLanguage: "en" },
+      };
+      update.run(JSON.stringify(v2), r.business_id);
+    }
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

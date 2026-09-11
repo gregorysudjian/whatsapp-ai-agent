@@ -14,11 +14,13 @@
 
 import { prompter } from "./prompt.ts";
 import {
-  createBusiness, credentialSummary, getBusiness, getFacts, getSchedule, listBusinesses,
+  createBusiness, credentialSummary, getBusiness, getSchedule, listBusinesses,
   seedDefaultBusiness, setBusinessStatus, setWhatsappCredentials, ValidationError,
 } from "../store/businesses.ts";
 import { config } from "../config.ts";
 import { listConversations, listMessages } from "../store/queries.ts";
+import { getSettings } from "../store/settings.ts";
+import { listServices } from "../store/services.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -95,8 +97,9 @@ async function main(): Promise<void> {
         ...b,
         webhook: webhookUrl(b.publicId),
         credentials: credentialSummary(id) ?? "not connected",
-        facts: getFacts(id),
+        settings: getSettings(id),
         schedule: getSchedule(id),
+        services: listServices(id, true),
       }, null, 2));
       return;
     }

@@ -9,8 +9,10 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { log } from "../logger.ts";
 import { recordEvent, pauseForHuman, type BusinessId } from "../store/db.ts";
 import { availableSlots, createBooking } from "../store/bookings.ts";
-import { getFacts } from "../store/businesses.ts";
-import { isConfigured } from "./persona.ts";
+import { getBusiness } from "../store/businesses.ts";
+import { getSchedule, getSettings, LANGUAGE_NAMES } from "../store/settings.ts";
+import { formatPrice, listServices } from "../store/services.ts";
+import { describeHours } from "./prompt.ts";
 
 /**
  * `strict: true` with additionalProperties:false guarantees the arguments
@@ -21,7 +23,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "get_business_info",
     description:
-      "Opening hours, address, and contact details for the business. Use this instead of guessing or recalling them.",
+      "The business's current opening hours, address, services with durations and prices, FAQs and languages. Use this instead of guessing or recalling them.",
     strict: true,
     input_schema: {
       type: "object",
@@ -109,14 +111,25 @@ export function executeTool(
 
   switch (name) {
     case "get_business_info": {
-      const facts = getFacts(ctx.businessId);
+      // Read fresh, so an edit on the settings page applies mid-conversation.
+      const business = getBusiness(ctx.businessId);
+      const s = getSettings(ctx.businessId);
       return {
-        content: isConfigured(facts)
-          ? JSON.stringify({
-              name: facts.name, what: facts.what,
-              hours: facts.hours, address: facts.address, contact: facts.contact,
-            })
-          : "The business details have not been configured yet. Tell the customer you do not have that information and offer to pass the question to a human.",
+        content: JSON.stringify({
+          name: business?.name ?? null,
+          about: s.about || null,
+          address: s.address || null,
+          contact: s.contact || null,
+          timezone: business?.timezone ?? null,
+          hours: describeHours(getSchedule(ctx.businessId)),
+          services: listServices(ctx.businessId).map((svc) => ({
+            service_id: svc.id, name: svc.name, duration_min: svc.durationMin,
+            price: formatPrice(svc) ?? "not set - offer to ask a person",
+          })),
+          languages: s.languages.map((c) => LANGUAGE_NAMES[c] ?? c),
+          faqs: s.faqs,
+          note: "Anything null or missing is unknown: say so, and offer to pass the question to a person.",
+        }),
       };
     }
 

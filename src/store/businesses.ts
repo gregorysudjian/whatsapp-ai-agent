@@ -8,13 +8,16 @@
  */
 
 import crypto from "node:crypto";
-import { db, type BusinessId } from "./db.ts";
+import { db, readFlag, writeFlag, type BusinessId } from "./db.ts";
 import { config } from "../config.ts";
 import { log } from "../logger.ts";
 import { decrypt, encrypt, redact } from "../security/crypto.ts";
 import {
-  BUSINESS as SEED_FACTS, SEED_SCHEDULE, SEED_TIMEZONE, isConfigured, type BusinessFacts,
+  SEED_NAME, SEED_SCHEDULE, SEED_SERVICES, SEED_SETTINGS, SEED_TIMEZONE,
 } from "../agent/persona.ts";
+import { ValidationError } from "./errors.ts";
+import { getSettings, hasSettings, initSettings, setSettings } from "./settings.ts";
+import { createService, listServices } from "./services.ts";
 
 /** Created by migration 2; holds everything from before multi-tenancy. */
 export const DEFAULT_BUSINESS_ID: BusinessId = 1;
@@ -46,7 +49,12 @@ export interface WhatsappCredentials {
   graphVersion: string;
 }
 
-export class ValidationError extends Error {}
+// Re-exported so existing imports keep working; the class lives in errors.ts
+// to keep settings.ts and this module from importing each other.
+export { ValidationError };
+export {
+  DEFAULT_SCHEDULE, getSchedule, setSchedule, validSchedule, type DayHours, type Schedule,
+} from "./settings.ts";
 
 // --- validation -----------------------------------------------------------
 
@@ -155,7 +163,7 @@ export function createBusiness(input: NewBusiness): Business {
   const result = insertBusiness.run(publicId, name, timezone, language, now, now);
   const id = Number(result.lastInsertRowid);
 
-  setFacts(id, unconfiguredFacts(name));
+  initSettings(id, language);
   log.info("business_created", { id, name });
   return getBusiness(id)!;
 }
@@ -164,6 +172,19 @@ const timezoneStmt = db.prepare(`UPDATE businesses SET timezone = ?, updated_at 
 
 export function setBusinessTimezone(id: BusinessId, timezone: string): void {
   timezoneStmt.run(validTimezone(timezone), Date.now(), id);
+}
+
+const profileStmt = db.prepare(
+  `UPDATE businesses SET name = ?, timezone = ?, default_language = ?, updated_at = ? WHERE id = ?`,
+);
+
+/** What an owner may change about their own business on the settings page. */
+export function updateBusinessProfile(
+  id: BusinessId,
+  input: { name: string; timezone: string; defaultLanguage: string },
+): Business {
+  profileStmt.run(validName(input.name), validTimezone(input.timezone), validLanguage(input.defaultLanguage), Date.now(), id);
+  return getBusiness(id)!;
 }
 
 const statusStmt = db.prepare(`UPDATE businesses SET status = ?, updated_at = ? WHERE id = ?`);
@@ -265,127 +286,43 @@ export function credentialSummary(id: BusinessId): Record<string, string | null>
   };
 }
 
-// --- facts that feed the system prompt ------------------------------------
-
-/** What a new client's agent knows before its owner fills in settings. */
-export function unconfiguredFacts(name: string): BusinessFacts {
-  return {
-    name,
-    what: "<not configured>",
-    hours: "<not configured>",
-    address: "<not configured>",
-    contact: "<not configured>",
-    neverDo: [
-      "promise a refund, discount, or delivery date",
-      "quote a price that is not listed here",
-    ],
-  };
-}
-
-// --- opening hours --------------------------------------------------------
-
-/** "HH:MM", 24h. */
-export interface DayHours { open: string; close: string }
-
-/** Keyed by JS weekday: "0" = Sunday ... "6" = Saturday. Absent = closed. */
-export type Schedule = Partial<Record<"0" | "1" | "2" | "3" | "4" | "5" | "6", DayHours>>;
-
-/** What a new client gets until its owner sets real hours: Mon-Fri 9-5. */
-export const DEFAULT_SCHEDULE: Schedule = {
-  "1": { open: "09:00", close: "17:00" }, "2": { open: "09:00", close: "17:00" },
-  "3": { open: "09:00", close: "17:00" }, "4": { open: "09:00", close: "17:00" },
-  "5": { open: "09:00", close: "17:00" },
-};
-
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-export function validSchedule(input: unknown): Schedule {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new ValidationError("Schedule must be an object keyed by weekday 0-6.");
-  }
-  const out: Schedule = {};
-  for (const [day, hours] of Object.entries(input as Record<string, unknown>)) {
-    if (!/^[0-6]$/.test(day)) throw new ValidationError(`Bad weekday: ${day}`);
-    if (hours == null) continue; // explicitly closed
-    const h = hours as Record<string, unknown>;
-    const open = String(h["open"] ?? "");
-    const close = String(h["close"] ?? "");
-    if (!HHMM.test(open) || !HHMM.test(close)) throw new ValidationError(`Hours for day ${day} must be HH:MM.`);
-    // Lexical compare is correct for zero-padded 24h times.
-    if (open >= close) throw new ValidationError(`Day ${day} closes before it opens.`);
-    out[day as keyof Schedule] = { open, close };
-  }
-  return out;
-}
-
-// --- settings row: facts + schedule ---------------------------------------
-
-const getSettingsStmt = db.prepare(
-  `SELECT facts, schedule FROM business_settings WHERE business_id = ?`,
-);
-// Each upsert touches only its own column; the other is supplied solely for
-// the very first insert, where the row does not exist yet.
-const upsertFactsStmt = db.prepare(`
-  INSERT INTO business_settings (business_id, facts, schedule, updated_at) VALUES (?, ?, ?, ?)
-  ON CONFLICT(business_id) DO UPDATE SET facts = excluded.facts, updated_at = excluded.updated_at
-`);
-const upsertScheduleStmt = db.prepare(`
-  INSERT INTO business_settings (business_id, facts, schedule, updated_at) VALUES (?, ?, ?, ?)
-  ON CONFLICT(business_id) DO UPDATE SET schedule = excluded.schedule, updated_at = excluded.updated_at
-`);
-
-function settingsRow(id: BusinessId): Record<string, unknown> | undefined {
-  return getSettingsStmt.get(id) as Record<string, unknown> | undefined;
-}
-
-export function getFacts(id: BusinessId): BusinessFacts {
-  const row = settingsRow(id);
-  if (!row) return unconfiguredFacts(getBusiness(id)?.name ?? "this business");
-  return JSON.parse(String(row["facts"])) as BusinessFacts;
-}
-
-export function setFacts(id: BusinessId, facts: BusinessFacts): void {
-  upsertFactsStmt.run(id, JSON.stringify(facts), JSON.stringify(DEFAULT_SCHEDULE), Date.now());
-}
-
-export function getSchedule(id: BusinessId): Schedule {
-  const row = settingsRow(id);
-  return row ? (JSON.parse(String(row["schedule"])) as Schedule) : DEFAULT_SCHEDULE;
-}
-
-export function setSchedule(id: BusinessId, schedule: unknown): void {
-  const valid = validSchedule(schedule);
-  const name = getBusiness(id)?.name ?? "this business";
-  upsertScheduleStmt.run(id, JSON.stringify(unconfiguredFacts(name)), JSON.stringify(valid), Date.now());
-}
-
-export const factsConfigured = isConfigured;
-
 // --- boot -----------------------------------------------------------------
 
 const renameStmt = db.prepare(`UPDATE businesses SET name = ?, updated_at = ? WHERE id = ?`);
 
+/** Marks the one-time application of the owner's answers (2026-09-11). */
+const SEED_FLAG = "seed_v2_applied";
+
 /**
- * Keeps a pre-multi-tenancy install working with no manual steps: the
- * WHATSAPP_* env vars become business #1's (encrypted) credentials, and the
- * facts that used to be hardcoded in persona.ts become its settings. Runs on
- * every boot; a no-op once the database already agrees with the env.
+ * Keeps a pre-multi-tenancy install working with no manual steps, and seeds
+ * the default business once. Runs on every boot; each part is a no-op once
+ * done, and nothing here ever overwrites what an owner later saved:
+ *
+ *   - first boot: settings row, Ninja Co's hours, timezone and name;
+ *   - once (flagged): the owner's answers - languages, contact, placeholder
+ *     services - merged over whatever settings exist (migrated or default);
+ *   - every boot: WHATSAPP_* env vars become business #1's encrypted
+ *     credentials when they differ from what is stored.
  */
 export function seedDefaultBusiness(): void {
   const seed = config.seedWhatsapp;
   const business = getBusiness(DEFAULT_BUSINESS_ID);
   if (!business) return;
 
-  // Seeded once, on the first boot after migration - the same moment the
-  // facts are - so a timezone later changed in the admin panel is not reset.
-  if (!settingsRow(DEFAULT_BUSINESS_ID)) {
-    setFacts(DEFAULT_BUSINESS_ID, SEED_FACTS);
-    setSchedule(DEFAULT_BUSINESS_ID, SEED_SCHEDULE);
+  if (!hasSettings(DEFAULT_BUSINESS_ID)) {
+    initSettings(DEFAULT_BUSINESS_ID, business.defaultLanguage, SEED_SCHEDULE);
     setBusinessTimezone(DEFAULT_BUSINESS_ID, SEED_TIMEZONE);
-    if (!SEED_FACTS.name.startsWith("<")) {
-      renameStmt.run(SEED_FACTS.name, Date.now(), DEFAULT_BUSINESS_ID);
+    if (business.name === "Default business") renameStmt.run(SEED_NAME, Date.now(), DEFAULT_BUSINESS_ID);
+    log.info("default_business_initialised", { name: SEED_NAME });
+  }
+
+  if (!readFlag(DEFAULT_BUSINESS_ID, SEED_FLAG)) {
+    setSettings(DEFAULT_BUSINESS_ID, { ...getSettings(DEFAULT_BUSINESS_ID), ...SEED_SETTINGS });
+    if (listServices(DEFAULT_BUSINESS_ID, true).length === 0) {
+      for (const svc of SEED_SERVICES) createService(DEFAULT_BUSINESS_ID, svc);
     }
-    log.info("default_business_facts_seeded", { name: SEED_FACTS.name });
+    writeFlag(DEFAULT_BUSINESS_ID, SEED_FLAG, String(Date.now()));
+    log.info("default_business_seeded", { languages: SEED_SETTINGS.languages, services: SEED_SERVICES.length });
   }
 
   if (seed.phoneNumberId && seed.accessToken && seed.appSecret) {

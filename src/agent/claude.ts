@@ -9,9 +9,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.ts";
 import { log } from "../logger.ts";
 import { recordEvent, type BusinessId } from "../store/db.ts";
-import { getFacts } from "../store/businesses.ts";
+import { getBusiness } from "../store/businesses.ts";
+import { getSchedule, getSettings } from "../store/settings.ts";
+import { listServices } from "../store/services.ts";
 import { buildHistory } from "./memory.ts";
-import { buildSystemPrompt } from "./persona.ts";
+import { buildContextBlock, buildSystemPrompt } from "./prompt.ts";
 import { TOOLS, executeTool, type ToolContext } from "./tools.ts";
 
 /**
@@ -73,9 +75,20 @@ export async function generateReply(
 ): Promise<ReplyResult> {
   const messages = buildHistory(businessId, waId);
   const ctx: ToolContext = { businessId, waId, senderName };
-  // Built once per turn, from this business's own facts. Stays byte-stable
-  // between edits to its settings, so the prompt cache holds per client.
-  const systemPrompt = buildSystemPrompt(getFacts(businessId));
+  // Built once per turn from this business's own saved settings. Byte-stable
+  // between edits, so the prompt cache holds per client. The clock goes in a
+  // second block after the cache breakpoint: it changes every minute, and it
+  // is how the agent turns "tomorrow at 10" into a date.
+  const business = getBusiness(businessId);
+  const timezone = business?.timezone ?? "America/Toronto";
+  const systemPrompt = buildSystemPrompt({
+    businessName: business?.name ?? "this business",
+    timezone,
+    settings: getSettings(businessId),
+    schedule: getSchedule(businessId),
+    services: listServices(businessId),
+  });
+  const contextBlock = buildContextBlock(timezone);
 
   if (messages.length === 0) {
     // Nothing replayable (e.g. the only message was media with no caption).
@@ -108,6 +121,9 @@ export async function generateReply(
               // Resent on every inbound message, so it is the cheapest win
               // available. Requires the prompt to stay byte-stable.
               cache_control: { type: "ephemeral" },
+            }, {
+              type: "text",
+              text: contextBlock,
             }],
             messages,
             tools: TOOLS,

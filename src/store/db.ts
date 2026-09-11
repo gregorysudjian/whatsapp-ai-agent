@@ -46,6 +46,16 @@ const putSetting = db.prepare(`
 
 const AGENT_ENABLED = "agent_enabled";
 
+/** Per-business key/value flags (the kill switch, one-time seed markers). */
+export function readFlag(businessId: BusinessId, key: string): string | undefined {
+  const row = getSetting.get(businessId, key) as Record<string, unknown> | undefined;
+  return row === undefined ? undefined : String(row["value"]);
+}
+
+export function writeFlag(businessId: BusinessId, key: string, value: string): void {
+  putSetting.run(businessId, key, value);
+}
+
 /**
  * Per-client stop. Messages are still received, stored and shown on the
  * dashboard when this is off - only the reply is withheld - so turning the
