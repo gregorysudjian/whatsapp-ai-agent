@@ -75,7 +75,7 @@ separate throwaway database.
 ### D2 — Login and roles
 Two accounts exist in your real database; their one-time passwords are in
 `data/initial-credentials.txt` (never committed, never printed in logs):
-- **gregory.sudjian@gmail.com** — super admin, sees every business (replaced the first account, admin@example.com, which is now deactivated).
+- **gregory.sudjian@gmail.com** — super admin, sees every business (it replaced the first admin account, which is now deactivated).
 - **owner@ninjaco.test** — owner of Ninja Co only.
 
 Both must change their password at first login. Until then they can see

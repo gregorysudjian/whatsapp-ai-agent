@@ -114,7 +114,7 @@ The previous plan (phases 3-5, all done) is in git history: `git show 812dfe5:pl
 | Login rate limit | In-memory: 5 failures per email per 15 min, 30 per IP. Always the same generic error message. | Single instance, matches the documented event-bus assumption. |
 | API shape | `/api/auth/*`, `/api/b/:businessId/*` (owner: must equal their own business; super admin: any), `/api/admin/*` (super admin only). | Scope is visible in every URL and enforced by one middleware. |
 | Roles | `super_admin` (business_id NULL, sees all) and `owner` (exactly one business). A `CHECK` constraint enforces the pairing. | Matches the brief; staff roles can come later. |
-| First accounts | Created overnight: super admin **admin@example.com**; owner of Ninja Co **owner@ninjaco.test**. Random 16-character passwords written to `data/initial-credentials.txt` (gitignored via `data/`), never logged, **forced change on first login**. | The owner needs a way in at 7am. |
+| First accounts | Created overnight: a super admin account; owner of Ninja Co **owner@ninjaco.test**. Random 16-character passwords written to `data/initial-credentials.txt` (gitignored via `data/`), never logged, **forced change on first login**. | The owner needs a way in at 7am. |
 | Services | Their own table (`services`, stable ids), not JSON. FAQs, tone, languages and handoff rules are JSON in `business_settings`. | Bookings reference a service; renaming or deactivating one must not orphan past bookings. |
 | Booking model | Wall-clock start/end in the **business timezone** (`YYYY-MM-DDTHH:MM`), duration from the service, slot grid of 30 min, **one booking at a time** (capacity 1), overlap checked inside `BEGIN IMMEDIATE`. | Matches how the tutoring business works; capacity > 1 is a later setting. |
 | Reminders | Meta **template** messages (they must go outside the 24h window), quick-reply buttons with payloads `confirm:<bookingId>` / `cancel:<bookingId>`, sent by an in-process scheduler every 60 s that claims each reminder atomically. **Off by default per business.** | Templates are the only thing Meta will deliver a day later. |
@@ -498,7 +498,7 @@ Rewrite `MORNING.md` at the start of the run (the old one is in git) and **updat
 every step**, so an interrupted night still leaves an accurate report. Sections:
 
 1. **Start here** (three lines): `npm run build:web`, `npm run dev`, open
-   `http://localhost:3001`, log in as `admin@example.com` with the password in
+   `http://localhost:3001`, log in as the super admin with the password in
    `data/initial-credentials.txt`, and change it.
 2. **What got built**, a table of steps: done / partial / not started, with one line each.
 3. **How to test each finished step**: numbered clicks on real screens, plus what you should
@@ -615,4 +615,4 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   already lives in the conversation, and a copy would double what an erasure request must reach.
 - **After the run (2026-09-11), at the owner's request:** super admin is now
   **gregory.sudjian@gmail.com** (created with a one-time password, forced change at first
-  sign-in); admin@example.com is deactivated, kept only so the audit history stays whole.
+  sign-in); the first admin account is deactivated, kept only so the audit history stays whole.
