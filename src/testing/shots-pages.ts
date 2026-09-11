@@ -11,6 +11,7 @@ export function extraPages(bid: number, ownerCookie: string, _adminCookie: strin
     { name: "settings-services", path: `/b/${bid}/settings?tab=services`, cookie: ownerCookie, fullPage: true },
     { name: "settings-tone", path: `/b/${bid}/settings?tab=tone`, cookie: ownerCookie, fullPage: true },
     { name: "settings-preview", path: `/b/${bid}/settings?tab=preview`, cookie: ownerCookie, fullPage: true },
+    { name: "settings-reminders", path: `/b/${bid}/settings?tab=reminders`, cookie: ownerCookie, fullPage: true },
     { name: "inbox", path: `/b/${bid}/inbox`, cookie: ownerCookie },
     { name: "bookings", path: `/b/${bid}/bookings`, cookie: ownerCookie },
     { name: "bookings-list", path: `/b/${bid}/bookings?view=list`, cookie: ownerCookie },

@@ -558,5 +558,13 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   `user_version` on a new one (which re-ran migration 6 on an already-new table).
 - **D6, deep links:** `?view=list`, `?open=<id>`, `?new=1` on the bookings page (also how the
   screenshots reach the drawer and the dialog).
+- **D7, the kill switch also stops reminders:** "Pause agent" is what an owner hits in a hurry;
+  it should mean no automatic messages at all. *Reverse:* drop the `agentEnabled` check in
+  `runReminders`.
+- **D7, no reminder for last-minute bookings:** skipped when the booking was made after its
+  reminder time would have been. **A failed reminder stays claimed** (not retried every
+  minute against a template Meta rejects); the failure is an event with Meta's error.
+- **D7, button replies** are fixed sentences in en/fr/ar chosen by the template language,
+  sent as `system` messages; a button for someone else's booking is ignored silently.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

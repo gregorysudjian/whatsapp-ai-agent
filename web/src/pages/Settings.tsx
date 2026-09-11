@@ -126,7 +126,7 @@ export function Settings() {
         {tab === "faqs" && <FaqsTab faqs={draft.settings.faqs} onChange={(faqs) => setS({ faqs })} />}
         {tab === "tone" && <ToneTab settings={draft.settings} setS={setS} languageNames={data.languageNames} />}
         {tab === "handoff" && <HandoffTab settings={draft.settings} setS={setS} />}
-        {tab === "reminders" && <RemindersTab settings={draft.settings} />}
+        {tab === "reminders" && <RemindersTab settings={draft.settings} setS={setS} />}
         {tab === "preview" && <PreviewTab bid={String(bid)} version={JSON.stringify(data)} />}
       </div>
 
@@ -437,14 +437,61 @@ function HandoffTab({ settings, setS }: { settings: AgentSettings; setS: (p: Par
   );
 }
 
-// --- Reminders (live in D7) -----------------------------------------------------
+// --- Reminders --------------------------------------------------------------------
 
-function RemindersTab({ settings }: { settings: AgentSettings }) {
-  const { t } = useI18n();
+/**
+ * What the customer receives, per template language - word for word the
+ * bodies in docs/whatsapp-templates.md, which is what the owner submits to
+ * Meta. {{1}} name, {{2}} date, {{3}} time.
+ */
+const REMINDER_SAMPLES: Record<string, { body: string; confirm: string; cancel: string; dir?: "rtl" }> = {
+  en: { body: "Hi {{1}}, this is a reminder of your appointment on {{2}} at {{3}}. Can you still make it?", confirm: "Confirm", cancel: "Cancel" },
+  fr: { body: "Bonjour {{1}}, petit rappel de votre rendez-vous le {{2}} à {{3}}. Serez-vous présent ?", confirm: "Confirmer", cancel: "Annuler" },
+  ar: { body: "مرحبًا {{1}}، نذكّرك بموعدك يوم {{2}} الساعة {{3}}. هل ما زلت قادرًا على الحضور؟", confirm: "تأكيد", cancel: "إلغاء", dir: "rtl" },
+};
+const TEMPLATE_LANGUAGES = ["en", "en_US", "fr", "fr_CA", "ar"];
+const HOURS_OPTIONS = [2, 4, 12, 24, 48, 72];
+
+function RemindersTab({ settings, setS }: { settings: AgentSettings; setS: (p: Partial<AgentSettings>) => void }) {
+  const { t, locale } = useI18n();
+  const r = settings.reminders;
+  const names = useMemo(() => {
+    try { return new Intl.DisplayNames([locale], { type: "language" }); } catch { return null; }
+  }, [locale]);
+  const langName = (code: string) => {
+    const n = names?.of(code.replace("_", "-")) ?? code;
+    return `${n.charAt(0).toLocaleUpperCase(locale)}${n.slice(1)} (${code})`;
+  };
+  const set = (patch: Partial<AgentSettings["reminders"]>) => setS({ reminders: { ...r, ...patch } });
+  const sample = REMINDER_SAMPLES[r.templateLanguage.slice(0, 2)] ?? REMINDER_SAMPLES["en"]!;
+  const filled = sample.body.replace("{{1}}", "Sam").replace("{{2}}", "…").replace("{{3}}", "10:00");
   return (
     <Section intro={t("settings.remindersIntro")}>
-      <Alert tone="blue">{t("settings.remindersSoon")}</Alert>
-      <Switch checked={settings.reminders.enabled} onChange={() => {}} disabled label={t("settings.tab.reminders")} />
+      <Switch checked={r.enabled} onChange={(enabled) => set({ enabled })} label={t("settings.remindersOn")} hint={t("settings.remindersOnHint")} />
+      {r.enabled && <Alert tone="amber">{t("settings.remindersApproval")}</Alert>}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Select label={t("settings.hoursBefore")} value={r.hoursBefore} onChange={(e) => set({ hoursBefore: Number(e.target.value) })}>
+          {[...new Set([...HOURS_OPTIONS, r.hoursBefore])].sort((a, b) => a - b).map((h) => (
+            <option key={h} value={h}>{t("settings.hoursOption", { n: h })}</option>
+          ))}
+        </Select>
+        <Select label={t("settings.templateLanguage")} hint={t("settings.templateLanguageHint")} value={r.templateLanguage}
+          onChange={(e) => set({ templateLanguage: e.target.value })}>
+          {[...new Set([...TEMPLATE_LANGUAGES, r.templateLanguage])].map((code) => <option key={code} value={code}>{langName(code)}</option>)}
+        </Select>
+      </div>
+      <Field label={t("settings.templateName")} hint={t("settings.templateNameHint")} value={r.templateName} maxLength={100}
+        pattern="[a-z0-9_]+" onChange={(e) => set({ templateName: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })} />
+      <div>
+        <p className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">{t("settings.reminderPreview")}</p>
+        <div className="max-w-sm rounded-2xl rounded-bl-md bg-white p-3 text-sm shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700" dir={sample.dir ?? "ltr"}>
+          <p className="whitespace-pre-wrap">{filled}</p>
+          <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-zinc-100 pt-2 text-center text-sm font-medium text-sky-600 dark:border-zinc-700 dark:text-sky-400">
+            <span>{sample.confirm}</span><span>{sample.cancel}</span>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-zinc-500">{t("settings.reminderPreviewHint")}</p>
+      </div>
     </Section>
   );
 }

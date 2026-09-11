@@ -190,9 +190,10 @@ export function recordOutbound(
   text: string,
   sender: OutboundSender = "ai",
   userId: number | null = null,
+  type: "text" | "template" = "text",
 ): void {
   const ts = Date.now();
-  insertMessage.run(id, businessId, waId, "out", "text", text, null, ts, null, null, null, sender, userId);
+  insertMessage.run(id, businessId, waId, "out", type, text, null, ts, null, null, null, sender, userId);
   touchContact.run(businessId, waId, null, ts, null, ts, 0, 1);
   publish({ businessId, kind: "message", direction: "out", waId, id });
 }

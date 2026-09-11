@@ -3,12 +3,15 @@ import { log } from "./logger.ts";
 import { createApp } from "./app.ts";
 import { listBusinesses, seedDefaultBusiness } from "./store/businesses.ts";
 import { getSettings, isConfigured } from "./store/settings.ts";
+import { startReminderScheduler } from "./core/reminders.ts";
 
 // Before the app starts taking webhooks: carries a pre-multi-tenancy install's
 // env credentials and hardcoded facts into business #1.
 seedDefaultBusiness();
 
 const app = createApp();
+// Sends only for businesses that turned reminders on (off by default).
+startReminderScheduler();
 
 app.listen(config.port, () => {
   log.info("server_started", { port: config.port });

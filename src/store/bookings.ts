@@ -414,3 +414,28 @@ export function rescheduleForCustomer(businessId: BusinessId, waId: string, id: 
   // A confirmed booking moved to a new time is no longer confirmed for it.
   return updateBooking(businessId, id, { start, status: "booked" }, "agent");
 }
+
+// --- reminders ----------------------------------------------------------------------
+
+const dueStmt = db.prepare(`${SELECT}
+  WHERE b.business_id = ? AND b.status IN ('booked', 'confirmed') AND b.reminder_sent_at IS NULL
+    AND b.wa_id IS NOT NULL AND b.start_at > ? AND b.start_at <= ?
+  ORDER BY b.start_at`);
+
+/** Bookings starting in (fromWall, toWall] that have not been reminded and have a WhatsApp number. */
+export function dueForReminder(businessId: BusinessId, fromWall: string, toWall: string): Booking[] {
+  return dueStmt.all(businessId, fromWall, toWall).map((r) => toBooking(r as Record<string, unknown>));
+}
+
+const claimStmt = db.prepare(
+  `UPDATE bookings SET reminder_sent_at = ? WHERE business_id = ? AND id = ? AND reminder_sent_at IS NULL`,
+);
+
+/**
+ * Take the right to send this booking's reminder. Exactly one caller ever
+ * gets true - two overlapping scheduler runs, or a restart mid-run, cannot
+ * send the same reminder twice.
+ */
+export function claimReminder(businessId: BusinessId, id: number, now: number = Date.now()): boolean {
+  return Number(claimStmt.run(now, businessId, id).changes) === 1;
+}

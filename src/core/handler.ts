@@ -3,6 +3,7 @@ import { generateReply } from "../agent/claude.ts";
 import { log } from "../logger.ts";
 import { agentEnabled, humanTookOverSince, isPaused, recordEvent, recordUsage, type BusinessId } from "../store/db.ts";
 import type { InboundMessage } from "../whatsapp/types.ts";
+import { handleBookingButton } from "./reminders.ts";
 
 /**
  * Phase 3: load history -> ask Claude -> send.
@@ -21,6 +22,10 @@ export async function handleMessage(businessId: BusinessId, msg: InboundMessage)
     type: msg.raw.type,
     chars: msg.text.length,
   });
+
+  // A Confirm / Cancel tap on a reminder is answered here, deterministically,
+  // and never reaches the model - whoever has the conversation.
+  if (await handleBookingButton(businessId, msg)) return;
 
   // Checked before the model call, not after: a paused conversation should
   // cost nothing. The message is already stored, so nothing is lost - the

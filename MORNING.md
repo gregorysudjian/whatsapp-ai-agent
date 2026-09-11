@@ -33,7 +33,7 @@ Then delete that file.
 | D4 | Agent settings → system prompt | ✅ done — 8-tab settings page, services with prices, live prompt preview |
 | D5 | Inbox with human takeover | ✅ done — live two-pane inbox, take over / reply / hand back, old token dashboard retired |
 | D6 | Bookings v2 and bookings page | ✅ done — services and durations, statuses, overlap rule, customers manage their own, week/list page |
-| D7 | Reminders and confirmations | not started |
+| D7 | Reminders and confirmations | ✅ done — template reminders with Confirm/Cancel buttons; off until you submit the template and switch it on |
 | D9 | Overview stats and charts | not started |
 | D10 | Contacts and CSV export | not started |
 | D12 | Admin panel | not started |
@@ -144,6 +144,21 @@ a guessed booking number.
 Rules everywhere: two bookings may touch (10:00–11:00 then 11:00–12:00) but never overlap,
 whoever made them.
 
+### D7 — Reminders and confirmations
+**Off by default**, on purpose: reminders message customers who didn't write first, and
+WhatsApp only delivers them once Meta has approved your template.
+1. Submit the template: [docs/whatsapp-templates.md](docs/whatsapp-templates.md) has the
+   exact English, French and Arabic wording and the button order, step by step.
+2. When Meta shows it **Active**: **Agent settings → Reminders** → switch on, choose when
+   (24 hours before by default) and the template's language, **Save**.
+3. From then on, every booking with a WhatsApp number gets one reminder (never two, even if
+   the server restarts), with **Confirm** and **Cancel** buttons. Tapping one updates the
+   booking on the Bookings page and the customer gets a one-line answer — the AI isn't involved.
+4. The tab shows a preview of what the customer receives.
+
+Also: **Pause agent** stops reminders too; moving a booking sends a new reminder for the new
+time; a booking made after its reminder time (e.g. booked last-minute) gets none.
+
 ---
 
 ## 4. What needs you
@@ -151,8 +166,10 @@ whoever made them.
 1. **Replace Ninja Co's placeholder prices.** You said "put anything now": Robotics USD 25 and
    Coding USD 20 (60 min each) are made up. The agent quotes prices to real customers, so change
    them before the bot goes live: **Agent settings → Services → Edit**.
-2. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
-3. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
+2. **Submit the reminder template to Meta** ([docs/whatsapp-templates.md](docs/whatsapp-templates.md)),
+   then switch reminders on in Agent settings → Reminders.
+3. **Add `ANTHROPIC_AUTH_TOKEN` to `.env`.** Until then every reply is the fallback sentence.
+4. **Back up `APP_ENCRYPTION_KEY`** from `.env` somewhere outside this project.
 
 ---
 

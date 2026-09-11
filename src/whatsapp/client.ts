@@ -176,6 +176,44 @@ export async function sendText(
   return wamids;
 }
 
+/** One parameterised part of an approved template (Meta's component shape). */
+export interface TemplateComponent {
+  type: "body" | "header" | "button";
+  sub_type?: "quick_reply" | "url";
+  index?: string;
+  parameters: Array<{ type: "text"; text: string } | { type: "payload"; payload: string }>;
+}
+
+/**
+ * Send a pre-approved template. Deliberately NOT behind the 24h window check
+ * that guards sendText: reaching a customer who has not written in a day is
+ * exactly what templates are for, and the only thing Meta allows then.
+ *
+ * `preview` is what the inbox shows for it - the template's text lives in
+ * Meta, not here.
+ */
+export async function sendTemplate(
+  businessId: BusinessId,
+  to: string,
+  template: { name: string; language: string; components: TemplateComponent[] },
+  preview: string,
+): Promise<string | null> {
+  const creds = credentialsFor(businessId);
+  const result = (await graphPost(businessId, creds, messagesUrl(creds), {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "template",
+    template: { name: template.name, language: { code: template.language }, components: template.components },
+  })) as { messages?: Array<{ id: string }> };
+
+  const wamid = result.messages?.[0]?.id ?? null;
+  if (wamid) recordOutbound(businessId, wamid, to, preview, "system", null, "template");
+  else log.warn("send_missing_wamid", { businessId, to, template: template.name });
+  log.info("template_sent", { businessId, to, template: template.name, id: wamid });
+  return wamid;
+}
+
 /**
  * Blue ticks + the "typing…" bubble. Purely cosmetic, but without it the
  * user stares at an unread message while Claude thinks.

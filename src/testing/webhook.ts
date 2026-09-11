@@ -92,6 +92,20 @@ export function textMessagePayload(
   };
 }
 
+/** A tap on a template's quick-reply button, as Meta delivers it. */
+export function buttonPayload(
+  label: string,
+  payload: string,
+  options: TextMessageOptions = {},
+): WebhookPayload {
+  const base = textMessagePayload(label, options);
+  const message = base.entry![0]!.changes![0]!.value.messages![0]!;
+  delete message.text;
+  message.type = "button";
+  message.button = { text: label, payload };
+  return base;
+}
+
 export function statusPayload(
   status: MessageStatus,
   phoneNumberId: string = defaultTarget().phoneNumberId,

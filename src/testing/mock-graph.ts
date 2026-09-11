@@ -57,6 +57,16 @@ export class MockGraph {
       .map((r) => (r.body["text"] as { body: string } | undefined)?.body ?? "");
   }
 
+  /** Template sends: name, language and the components as sent. */
+  get sentTemplates(): Array<{ to: string; name: string; language: string; components: unknown[] }> {
+    return this.requests
+      .filter((r) => r.body["type"] === "template")
+      .map((r) => {
+        const tpl = r.body["template"] as { name: string; language: { code: string }; components: unknown[] };
+        return { to: String(r.body["to"]), name: tpl.name, language: tpl.language.code, components: tpl.components };
+      });
+  }
+
   /** Read receipts and typing indicators, which are not replies. */
   get statusUpdates(): RecordedRequest[] {
     return this.requests.filter((r) => r.body["status"] === "read");
