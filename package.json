@@ -25,11 +25,13 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
     "express": "^5.1.0",
+    "pdfkit": "0.20.2",
     "zod": "4.6.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
+    "@types/pdfkit": "0.17.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

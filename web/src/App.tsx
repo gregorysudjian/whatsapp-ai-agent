@@ -13,7 +13,8 @@ import { Inbox } from "./pages/Inbox.tsx";
 import { Bookings } from "./pages/Bookings.tsx";
 import { Contacts } from "./pages/Contacts.tsx";
 import { AdminAudit, AdminClients, AdminUsage } from "./pages/Admin.tsx";
-import { NotFound, Placeholder } from "./pages/Placeholder.tsx";
+import { Reports } from "./pages/Reports.tsx";
+import { NotFound } from "./pages/Placeholder.tsx";
 
 /** Signed in, password settled - or sent where they need to go. */
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -77,7 +78,7 @@ export function App() {
                   <Route path="bookings" element={<RequireBusiness><Bookings /></RequireBusiness>} />
                   <Route path="contacts" element={<RequireBusiness><Contacts /></RequireBusiness>} />
                   <Route path="settings" element={<RequireBusiness><Settings /></RequireBusiness>} />
-                  <Route path="reports" element={<RequireBusiness><Placeholder title="nav.reports" /></RequireBusiness>} />
+                  <Route path="reports" element={<RequireBusiness><Reports /></RequireBusiness>} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
                 <Route path="/admin/clients" element={<RequireAdmin><AdminClients /></RequireAdmin>} />

@@ -14,8 +14,9 @@ import { resolveSession } from "../auth/sessions.ts";
 import { getBusiness, updateBusinessProfile } from "../store/businesses.ts";
 import { listContacts, listConversations, listMessages, stats, type ConversationFilter } from "../store/queries.ts";
 import { toCsv } from "./csv.ts";
+import { renderMonthlyReport, reportData } from "../reports/monthly.ts";
 import {
-  agentEnabled, contactExists, handBack, isPaused, setAgentEnabled, takeOver, windowState,
+  agentEnabled, contactExists, db, handBack, isPaused, setAgentEnabled, takeOver, windowState,
 } from "../store/db.ts";
 import { canAccessBusiness } from "../store/users.ts";
 import { subscribe } from "../core/events.ts";
@@ -537,4 +538,39 @@ businessRouter.get("/contacts.csv", (req: Request, res: Response) => {
   // Personal information: never cached by a browser or a proxy.
   res.setHeader("Cache-Control", "no-store");
   res.send(csv);
+});
+
+// --- reports --------------------------------------------------------------------
+
+const firstActivityStmt = db.prepare(`SELECT MIN(ts) AS first FROM messages WHERE business_id = ?`);
+
+/** The months with a report to download: from the first message (or creation) to now, newest first. */
+businessRouter.get("/reports", (req: Request, res: Response) => {
+  const bid = businessOf(req);
+  const b = getBusiness(bid)!;
+  const first = Number((firstActivityStmt.get(bid) as { first: number | null }).first ?? b.createdAt);
+  const start = wallClockNow(b.timezone, Math.min(first, b.createdAt)).slice(0, 7);
+  const current = wallClockNow(b.timezone).slice(0, 7);
+  const months: string[] = [];
+  for (let m = current; m >= start && months.length < 36;) {
+    months.push(m);
+    const [y, mm] = [Number(m.slice(0, 4)), Number(m.slice(5, 7))];
+    m = mm === 1 ? `${y - 1}-12` : `${y}-${String(mm - 1).padStart(2, "0")}`;
+  }
+  res.json({ months, current, language: b.defaultLanguage });
+});
+
+const ReportQuery = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "a month like 2030-09") });
+
+businessRouter.get("/reports/monthly", async (req: Request, res: Response) => {
+  const input = query(ReportQuery, req, res);
+  if (!input) return;
+  const bid = businessOf(req);
+  const pdf = await renderMonthlyReport(reportData(bid, input.month));
+  record(req, "report_downloaded", input.month);
+  const safeName = getBusiness(bid)!.name.normalize("NFKD").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "report";
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}-${input.month}.pdf"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.send(pdf);
 });

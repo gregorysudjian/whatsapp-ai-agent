@@ -580,5 +580,8 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
   *Reverse:* allow role `super_admin` in `ownerOr404`.
 - **D12, billing months follow each client's timezone**; "this month" on the Clients list is
   the UTC month.
+- **D11, pdfkit 0.20.2 with built-in Helvetica** (no font files to ship; no Arabic glyphs).
+  The current month is reported to date, compared with the equal-length window before it.
+  `src/testing/report-preview.ts` renders and photographs a report from the demo database.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

@@ -37,7 +37,7 @@ Then delete that file.
 | D9 | Overview stats and charts | ✅ done — six headline numbers with change vs the previous period, three charts, a daily table |
 | D10 | Contacts and CSV export | ✅ done — searchable, sortable list; a spreadsheet-safe CSV export, audited |
 | D12 | Admin panel | ✅ done — clients, WhatsApp credentials (write-only), owner accounts, usage & billing with CSV, audit log |
-| D11 | Monthly PDF report | not started |
+| D11 | Monthly PDF report | ✅ done — one page per month in the business's language; the current month is reported to date |
 | D8 | Google Calendar | not started |
 | D13 | Law 25 hardening | not started |
 | D14 | Deploy-ready | not started |
@@ -204,6 +204,17 @@ Signed in as **admin@example.com**, the sidebar has an **Admin** section.
 
 Owners can't reach any of this: every admin address answers "not found" to them (tested for
 every route, including future ones).
+
+### D11 — Monthly report
+**Reports** in the sidebar: one row per month, newest first, each with **Download PDF**. The
+report is one A4 page in the business's language (Ninja Co: English; change it in Agent
+settings → Business): the six headline numbers with the change against the previous period,
+replies per day (agent vs team), appointments by status and reply times. The month in progress
+says "to date (1 to 11)" and compares with the same number of days before it. Each download is
+recorded in the audit log.
+
+Limitation: the PDF uses the built-in Helvetica font, which has no Arabic letters — fine for the
+report's own words (English/French), but a business *name* written in Arabic would not print.
 
 ---
 
