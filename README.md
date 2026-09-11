@@ -107,6 +107,7 @@ npm run business -- list                       # clients, status, webhook URLs
 npm run business -- add "Clinique X" --language fr --timezone America/Toronto
 npm run business -- connect 2                  # prompts for the Meta credentials
 npm run business -- show 2                     # secrets shown redacted, never in full
+npm run business -- messages 2                 # that client's conversations only
 npm run business -- deactivate 2               # acked, but not stored or answered
 ```
 

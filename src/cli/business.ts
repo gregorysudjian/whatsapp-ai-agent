@@ -5,6 +5,7 @@
  *   npm run business -- add "Clinic Alpha" [--timezone America/Toronto] [--language fr]
  *   npm run business -- connect <id>          (prompts for the WhatsApp credentials)
  *   npm run business -- show <id>
+ *   npm run business -- messages <id>     (that client's conversations)
  *   npm run business -- deactivate <id> | activate <id>
  *
  * Secrets are prompted for, never taken as arguments: an argument lands in
@@ -18,6 +19,7 @@ import {
   seedDefaultBusiness, setBusinessStatus, setWhatsappCredentials, ValidationError,
 } from "../store/businesses.ts";
 import { config } from "../config.ts";
+import { listConversations, listMessages } from "../store/queries.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -121,6 +123,24 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "messages": {
+      // Reads through the same business-scoped queries the dashboard uses, so
+      // what this prints is exactly what that client's own view will show.
+      const id = idArg();
+      const rows = listConversations(id).flatMap((c) =>
+        listMessages(id, c.waId).map((m) => ({
+          contact: c.name ? `${c.name} (${c.waId})` : c.waId,
+          direction: m.direction === "in" ? "customer ->" : "<- agent",
+          text: m.text.length > 60 ? m.text.slice(0, 57) + "..." : m.text,
+          time: new Date(m.ts).toLocaleString(),
+        })),
+      );
+      console.log(`Messages for ${getBusiness(id)!.name}:`);
+      if (rows.length) console.table(rows);
+      else console.log("  (none yet)");
+      return;
+    }
+
     case "deactivate":
     case "activate": {
       const id = idArg();
@@ -130,7 +150,7 @@ async function main(): Promise<void> {
     }
 
     default:
-      console.log("Usage: npm run business -- list | add <name> [--timezone TZ] [--language en|fr] | connect <id> | show <id> | activate <id> | deactivate <id>");
+      console.log("Usage: npm run business -- list | add <name> [--timezone TZ] [--language en|fr] | connect <id> | show <id> | messages <id> | activate <id> | deactivate <id>");
       process.exit(command ? 1 : 0);
   }
 }
