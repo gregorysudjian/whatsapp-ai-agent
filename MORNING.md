@@ -36,7 +36,7 @@ Then delete that file.
 | D7 | Reminders and confirmations | ✅ done — template reminders with Confirm/Cancel buttons; off until you submit the template and switch it on |
 | D9 | Overview stats and charts | ✅ done — six headline numbers with change vs the previous period, three charts, a daily table |
 | D10 | Contacts and CSV export | ✅ done — searchable, sortable list; a spreadsheet-safe CSV export, audited |
-| D12 | Admin panel | not started |
+| D12 | Admin panel | ✅ done — clients, WhatsApp credentials (write-only), owner accounts, usage & billing with CSV, audit log |
 | D11 | Monthly PDF report | not started |
 | D8 | Google Calendar | not started |
 | D13 | Law 25 hardening | not started |
@@ -185,6 +185,25 @@ column title to sort; click a person to open their conversation.
 language). It opens cleanly in Excel — accents and Arabic intact — and a customer who named
 themselves `=HYPERLINK(...)` on WhatsApp can't run a formula on your computer (such cells are
 defused). Every export is recorded in the audit log.
+
+### D12 — Admin panel (super admin only)
+Signed in as **admin@example.com**, the sidebar has an **Admin** section.
+1. **Clients**: every business, whether its WhatsApp is connected, its owners, and this month's
+   messages and model cost. **New client** creates one (name, timezone, language).
+2. Click a client → its panel:
+   - **Details**: name, timezone, language, and **Active** (while inactive, its WhatsApp
+     messages are neither stored nor answered).
+   - **WhatsApp connection**: the webhook URL to paste into that client's Meta app (with Copy),
+     and a form for its phone number ID, access token, app secret and verify token. They are
+     stored encrypted and never shown again — only masked (`****-one`).
+   - **Owner accounts**: create one → a **temporary password is shown once** (copy it and send it
+     privately; they must pick their own at first sign-in). Reset a password, deactivate an account.
+3. **Usage & billing**: pick a month → per client: messages received, agent and team replies,
+   template sends (reminders), tokens, and the indicative model cost, with totals and **Export CSV**.
+4. **Audit log**: who did what and when, filterable by client and action.
+
+Owners can't reach any of this: every admin address answers "not found" to them (tested for
+every route, including future ones).
 
 ---
 

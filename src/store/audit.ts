@@ -74,3 +74,33 @@ export function listAudit(businessId: BusinessId | "all", limit = 200): AuditRow
     };
   });
 }
+
+const searchStmt = db.prepare(`
+  SELECT a.*, u.email AS user_email FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+  WHERE (?1 IS NULL OR a.business_id = ?1) AND (?2 IS NULL OR a.action = ?2) AND (?3 IS NULL OR a.id < ?3)
+  ORDER BY a.id DESC LIMIT ?4
+`);
+const actionsStmt = db.prepare(`SELECT DISTINCT action FROM audit_log ORDER BY action`);
+
+/** For the admin audit viewer: filter by client and action, page backwards with `before` (an id). */
+export function searchAudit(q: { businessId?: number | null; action?: string | null; before?: number | null; limit?: number }): AuditRow[] {
+  return searchStmt
+    .all(q.businessId ?? null, q.action ?? null, q.before ?? null, Math.min(q.limit ?? 100, 500))
+    .map((raw) => {
+      const r = raw as Record<string, unknown>;
+      return {
+        id: Number(r["id"]),
+        ts: Number(r["ts"]),
+        userId: r["user_id"] == null ? null : Number(r["user_id"]),
+        userEmail: r["user_email"] == null ? null : String(r["user_email"]),
+        businessId: r["business_id"] == null ? null : Number(r["business_id"]),
+        action: String(r["action"]),
+        target: r["target"] == null ? null : String(r["target"]),
+        detail: r["detail"] == null ? null : String(r["detail"]),
+      };
+    });
+}
+
+export function auditActions(): string[] {
+  return actionsStmt.all().map((r) => String((r as Record<string, unknown>)["action"]));
+}

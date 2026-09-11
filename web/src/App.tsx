@@ -12,6 +12,7 @@ import { Settings } from "./pages/Settings.tsx";
 import { Inbox } from "./pages/Inbox.tsx";
 import { Bookings } from "./pages/Bookings.tsx";
 import { Contacts } from "./pages/Contacts.tsx";
+import { AdminAudit, AdminClients, AdminUsage } from "./pages/Admin.tsx";
 import { NotFound, Placeholder } from "./pages/Placeholder.tsx";
 
 /** Signed in, password settled - or sent where they need to go. */
@@ -79,9 +80,9 @@ export function App() {
                   <Route path="reports" element={<RequireBusiness><Placeholder title="nav.reports" /></RequireBusiness>} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
-                <Route path="/admin/clients" element={<RequireAdmin><Placeholder title="nav.clients" /></RequireAdmin>} />
-                <Route path="/admin/usage" element={<RequireAdmin><Placeholder title="nav.usage" /></RequireAdmin>} />
-                <Route path="/admin/audit" element={<RequireAdmin><Placeholder title="nav.audit" /></RequireAdmin>} />
+                <Route path="/admin/clients" element={<RequireAdmin><AdminClients /></RequireAdmin>} />
+                <Route path="/admin/usage" element={<RequireAdmin><AdminUsage /></RequireAdmin>} />
+                <Route path="/admin/audit" element={<RequireAdmin><AdminAudit /></RequireAdmin>} />
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>

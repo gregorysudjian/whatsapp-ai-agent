@@ -575,5 +575,10 @@ every step**, so an interrupted night still leaves an accurate report. Sections:
 - **D10, phone numbers in the CSV are digits only** (no "+"): a leading "+" would read as a
   formula and need the apostrophe escape. The export is audited (row count, search), and is
   `Cache-Control: no-store`.
+- **D12, super admins are CLI-only:** the panel manages owner accounts; a super admin can't be
+  created, reset or deactivated from it (so nobody locks themselves out with one click).
+  *Reverse:* allow role `super_admin` in `ownerOr404`.
+- **D12, billing months follow each client's timezone**; "this month" on the Clients list is
+  the UTC month.
 - **D5, audit holds no message text:** a manual reply is logged with its length only; the text
   already lives in the conversation, and a copy would double what an erasure request must reach.

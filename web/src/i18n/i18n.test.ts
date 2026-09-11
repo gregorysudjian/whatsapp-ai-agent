@@ -17,7 +17,8 @@ const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1
 // "Inactive" is correct French too (feminine, agreeing with « entreprise »).
 const SAME_IN_BOTH = new Set<Key>(["nav.contacts", "nav.menu", "nav.clients", "shell.inactive",
   "settings.minutes", "settings.question", "inbox.hours", "inbox.minutes",
-  "bookings.date", "bookings.notes", "bookings.notifyMessage", "contacts.count"]);
+  "bookings.date", "bookings.notes", "bookings.notifyMessage", "contacts.count",
+  "admin.col.client", "admin.col.whatsapp", "admin.total", "admin.action"]);
 
 test("French has exactly the English keys", () => {
   assert.deepEqual(Object.keys(fr).sort(), [...keys].sort());

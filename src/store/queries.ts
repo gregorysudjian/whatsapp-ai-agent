@@ -251,6 +251,15 @@ const USD_PER_MTOK_IN = 5;
 const USD_PER_MTOK_OUT = 25;
 const USD_PER_MTOK_CACHED = 0.5; // cache reads bill at ~0.1x input
 
+/** Indicative model cost in USD for a token count, at the list prices above. */
+export function estimateCostUsd(inputTokens: number, outputTokens: number, cachedTokens: number): number {
+  return Number((
+    (inputTokens / 1e6) * USD_PER_MTOK_IN +
+    (outputTokens / 1e6) * USD_PER_MTOK_OUT +
+    (cachedTokens / 1e6) * USD_PER_MTOK_CACHED
+  ).toFixed(4));
+}
+
 export function stats(businessId: BusinessId): Stats {
   const dayAgo = Date.now() - WINDOW_MS;
   const tokens = tokenTotals.get(businessId) as Record<string, unknown> | undefined;
