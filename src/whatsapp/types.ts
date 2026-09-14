@@ -21,7 +21,11 @@ export interface WebhookChange {
 export interface WebhookValue {
   messaging_product: "whatsapp";
   metadata: { display_phone_number: string; phone_number_id: string };
-  contacts?: Array<{ profile: { name: string }; wa_id: string }>;
+  /**
+   * Since v26 delivery receipts carry contacts too, and those have no
+   * profile; a user who has opted into usernames may have no wa_id.
+   */
+  contacts?: Array<{ profile?: { name?: string }; wa_id?: string; user_id?: string }>;
   messages?: IncomingMessage[];
   /** Delivery receipts (sent/delivered/read/failed) - not user messages. */
   statuses?: MessageStatus[];

@@ -204,3 +204,15 @@ test("a delivery receipt updates the stored message, sending nothing", async () 
   assert.equal(graph.sentTexts.length, 0, "a receipt is not a message");
   assert.equal(listMessages(B, wa).find((m) => m.id === outbound.id)?.status, "read");
 });
+
+test("a contact without a profile - v26 receipts, username users - does not drop the message", async () => {
+  setClientForTesting(claudeSaying("reply text"));
+  const wa = "14000000008";
+  const payload = textMessagePayload("hi", { from: wa });
+  payload.entry![0]!.changes![0]!.value.contacts = [{ user_id: "US.1234567890" }, { wa_id: wa }];
+
+  await deliver(baseUrl, payload);
+  await waitForStoredOutbound(wa);
+
+  assert.ok(listMessages(B, wa).some((m) => m.direction === "in" && m.text === "hi"));
+});

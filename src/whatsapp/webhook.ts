@@ -136,9 +136,10 @@ async function processPayload(
         }
       }
 
-      const senderNames = new Map(
-        (value.contacts ?? []).map((c) => [c.wa_id, c.profile.name]),
-      );
+      const senderNames = new Map<string, string>();
+      for (const c of value.contacts ?? []) {
+        if (c.wa_id && c.profile?.name) senderNames.set(c.wa_id, c.profile.name);
+      }
 
       for (const message of value.messages ?? []) {
         const inbound: InboundMessage = {
